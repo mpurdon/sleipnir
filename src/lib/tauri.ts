@@ -34,6 +34,12 @@ export async function loginOrg(name: string): Promise<Org> {
   return toOrg(status);
 }
 
+/** Headless background token upkeep — never opens a browser. */
+export async function refreshSession(name: string): Promise<Org> {
+  const status = await invoke<OrgStatusPayload>("refresh_session", { name });
+  return toOrg(status);
+}
+
 export interface OrgConfig {
   name: string;
   startUrl: string;
@@ -91,6 +97,29 @@ export interface DiscoverProgress {
 export function onDiscoverProgress(cb: (p: DiscoverProgress) => void): Promise<() => void> {
   return listen<DiscoverProgress>("discover:progress", (e) => cb(e.payload));
 }
+
+export interface ProfileTest {
+  ok: boolean;
+  account: string | null;
+  arn: string | null;
+  userId: string | null;
+  message: string | null;
+  ms: number;
+}
+
+/** Runs `aws sts get-caller-identity --profile <alias>` — the real
+ * terminal path through ~/.aws/config and credential_process. */
+export const testProfile = (alias: string) => invoke<ProfileTest>("test_profile", { alias });
+
+export interface RenameOutcome {
+  accounts: Account[];
+  state: AppState;
+}
+
+/** Renames a service alias everywhere: config, projects, engaged state,
+ * creds cache, and the ~/.aws/config profile stanza. */
+export const renameAccount = (oldAlias: string, newAlias: string) =>
+  invoke<RenameOutcome>("rename_account", { oldAlias, newAlias });
 
 export const getState = () => invoke<AppState>("get_state");
 export const setPin = (project: string, pinned: boolean) => invoke<AppState>("set_pin", { project, pinned });

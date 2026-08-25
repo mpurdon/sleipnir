@@ -11,6 +11,8 @@ pub enum AppError {
     Discovery(String),
     #[error("saving config: {0}")]
     Io(String),
+    #[error("{0}")]
+    Invalid(String),
 }
 
 impl From<crate::aws::sso_oidc::LoginError> for AppError {

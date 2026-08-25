@@ -41,7 +41,10 @@ pub fn list_orgs() -> Vec<OrgStatus> {
 }
 
 #[tauri::command]
-pub fn save_org(org: OrgConfig) -> Result<Vec<OrgStatus>, AppError> {
+pub fn save_org(mut org: OrgConfig) -> Result<Vec<OrgStatus>, AppError> {
+    // Regions are case-sensitive in SigV4 scopes — "US-EAST-1" breaks
+    // every signature downstream. Normalize at the door.
+    org.region = org.region.trim().to_lowercase();
     applog::info("save_org", &org);
     let cfg = config::upsert_org(org)?;
     Ok(cfg.orgs.iter().map(status_for).collect())
@@ -187,6 +190,17 @@ pub fn import_accounts(accounts: Vec<Account>) -> Result<Vec<Account>, AppError>
     Ok(cfg.accounts)
 }
 
+/// Background session upkeep: silently refreshes the org's access token
+/// via the keyring refresh token when it's expired or close to it. Never
+/// opens a browser — a dead session simply stays expired until the user
+/// clicks log in. Returns the (possibly updated) status either way.
+#[tauri::command]
+pub async fn refresh_session(name: String) -> Result<OrgStatus, AppError> {
+    let org = find_org(&name)?;
+    let _ = sso_oidc::ensure_fresh_token(&org).await;
+    Ok(status_for(&org))
+}
+
 #[tauri::command]
 pub fn get_state() -> state::AppState {
     state::load()
@@ -253,6 +267,140 @@ pub fn disengage_all() -> Result<state::AppState, AppError> {
     state::save(&st)?;
     applog::info(format!("disengaged ALL ({} profile(s))", profiles.len()), &json!({"profiles": profiles}));
     Ok(st)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileTest {
+    pub ok: bool,
+    pub account: Option<String>,
+    pub arn: Option<String>,
+    pub user_id: Option<String>,
+    pub message: Option<String>,
+    pub ms: u64,
+}
+
+/// End-to-end profile verification: shells out to the REAL AWS CLI
+/// (`aws sts get-caller-identity --profile <alias>`), which reads
+/// `~/.aws/config`, invokes sleipnir's own `credential_process`, and hits
+/// STS — the exact path every terminal uses. Nothing simulated.
+#[tauri::command]
+pub async fn test_profile(alias: String) -> Result<ProfileTest, AppError> {
+    let started = std::time::Instant::now();
+    let run = tokio::process::Command::new("aws")
+        .args(["sts", "get-caller-identity", "--profile", &alias, "--output", "json"])
+        .output();
+
+    let output = match tokio::time::timeout(std::time::Duration::from_secs(20), run).await {
+        Err(_) => {
+            return Ok(ProfileTest {
+                ok: false,
+                account: None,
+                arn: None,
+                user_id: None,
+                message: Some("timed out after 20s — network or credential resolution is hanging".into()),
+                ms: started.elapsed().as_millis() as u64,
+            })
+        }
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ProfileTest {
+                ok: false,
+                account: None,
+                arn: None,
+                user_id: None,
+                message: Some("AWS CLI not found on PATH — install awscli to run this test".into()),
+                ms: started.elapsed().as_millis() as u64,
+            })
+        }
+        Ok(Err(e)) => return Err(AppError::Io(e.to_string())),
+        Ok(Ok(out)) => out,
+    };
+
+    let ms = started.elapsed().as_millis() as u64;
+    if output.status.success() {
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
+        let result = ProfileTest {
+            ok: true,
+            account: parsed.get("Account").and_then(|v| v.as_str()).map(String::from),
+            arn: parsed.get("Arn").and_then(|v| v.as_str()).map(String::from),
+            user_id: parsed.get("UserId").and_then(|v| v.as_str()).map(String::from),
+            message: None,
+            ms,
+        };
+        applog::info(format!("test_profile {alias}: OK in {ms}ms"), &result);
+        Ok(result)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let message = if stderr.is_empty() { format!("aws exited with {}", output.status) } else { stderr };
+        applog::warn(format!("test_profile {alias}: FAILED in {ms}ms"), &json!({"alias": alias, "message": message}));
+        Ok(ProfileTest { ok: false, account: None, arn: None, user_id: None, message: Some(message), ms })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameOutcome {
+    pub accounts: Vec<Account>,
+    pub state: state::AppState,
+}
+
+/// Renames a service's alias everywhere it's load-bearing: config accounts
+/// + project memberships, the engaged map and last-engage memory, the
+/// per-profile creds cache file, and the `[profile X]` stanza (incl. its
+/// `credential_process --profile` argument) in `~/.aws/config`.
+#[tauri::command]
+pub fn rename_account(old_alias: String, new_alias: String) -> Result<RenameOutcome, AppError> {
+    let new_alias = new_alias.trim().to_string();
+    if new_alias.is_empty()
+        || !new_alias.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(AppError::Invalid(
+            "alias must be lowercase letters, digits and dashes (it becomes the AWS profile name)".into(),
+        ));
+    }
+
+    let mut cfg = config::load_or_seed();
+    if new_alias != old_alias && cfg.accounts.iter().any(|a| a.alias == new_alias) {
+        return Err(AppError::Invalid(format!("alias '{new_alias}' is already in use")));
+    }
+    let Some(account) = cfg.accounts.iter_mut().find(|a| a.alias == old_alias) else {
+        return Err(AppError::Invalid(format!("unknown service '{old_alias}'")));
+    };
+    account.alias = new_alias.clone();
+    for project in &mut cfg.projects {
+        for member in &mut project.members {
+            if *member == old_alias {
+                *member = new_alias.clone();
+            }
+        }
+    }
+    config::save(&cfg)?;
+
+    let mut st = state::load();
+    if let Some(e) = st.engaged.remove(&old_alias) {
+        st.engaged.insert(new_alias.clone(), e);
+    }
+    if let Some(le) = st.last_engage.remove(&format!("service:{old_alias}")) {
+        st.last_engage.insert(format!("service:{new_alias}"), le);
+    }
+    if let Err(e) = state::save(&st) {
+        applog::error("rename_account: state.json write failed", &json!({"error": e.to_string()}));
+    }
+
+    let _ = creds_cache::rename(&old_alias, &new_alias);
+    if let Err(e) = config::aws_config_editor::rename_profile(
+        &config::aws_config_editor::default_path(),
+        &old_alias,
+        &new_alias,
+    ) {
+        applog::error("rename_account: aws config rename failed", &json!({"error": e.to_string()}));
+    }
+
+    applog::info(
+        format!("renamed service '{old_alias}' → '{new_alias}'"),
+        &json!({"oldAlias": old_alias, "newAlias": new_alias}),
+    );
+    Ok(RenameOutcome { accounts: cfg.accounts, state: st })
 }
 
 #[derive(Debug, Clone, Serialize)]

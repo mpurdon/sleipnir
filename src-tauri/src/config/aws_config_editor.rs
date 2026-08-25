@@ -82,6 +82,29 @@ pub fn upsert_profiles(path: &Path, profiles: &[ProfileKeys]) -> io::Result<()> 
     std::fs::rename(&tmp, path)
 }
 
+/// Credential-source keys that OUTRANK `credential_process` in the AWS
+/// CLI's resolution chain (SSO config, assume-role, static keys). Left in
+/// place they silently override sleipnir's engagement — the stanza would
+/// say READONLY in the rail while terminals resolve something else
+/// entirely. Engage comments them out (reversibly, with a marker) rather
+/// than deleting.
+const CONFLICTING_KEYS: &[&str] = &[
+    "sso_start_url",
+    "sso_region",
+    "sso_account_id",
+    "sso_role_name",
+    "sso_session",
+    "role_arn",
+    "source_profile",
+    "credential_source",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_session_token",
+    "web_identity_token_file",
+];
+
+const DISABLED_MARKER: &str = "# sleipnir-disabled: ";
+
 fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
     // Locate the stanza: [start, end) where end is the next section header
     // or EOF.
@@ -106,6 +129,17 @@ fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
         .map(|off| start + 1 + off)
         .unwrap_or(lines.len());
 
+    // Neutralize higher-precedence credential sources already in the
+    // stanza so credential_process actually takes effect.
+    let writes_credential_process = spec.keys.iter().any(|(k, _)| k == "credential_process");
+    if writes_credential_process {
+        for line in &mut lines[start + 1..end] {
+            if CONFLICTING_KEYS.iter().any(|k| line_sets_key(line, k)) {
+                *line = format!("{DISABLED_MARKER}{line}");
+            }
+        }
+    }
+
     for (k, v) in &spec.keys {
         let new_line = format!("{k} = {v}");
         if let Some(idx) = (start + 1..end).find(|&i| line_sets_key(&lines[i], k)) {
@@ -120,6 +154,43 @@ fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
             lines.insert(insert_at, new_line);
         }
     }
+}
+
+/// Renames a `[profile old]` stanza in place — header line plus any
+/// `credential_process` value referencing `--profile old` — leaving every
+/// other byte untouched. A missing stanza is a no-op.
+pub fn rename_profile(path: &Path, old: &str, new: &str) -> io::Result<()> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let had_trailing_newline = original.is_empty() || original.ends_with('\n');
+    let mut lines: Vec<String> = original.lines().map(str::to_string).collect();
+
+    let Some(start) = lines.iter().position(|l| section_matches(l, old)) else {
+        return Ok(());
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| is_section_header(l))
+        .map(|off| start + 1 + off)
+        .unwrap_or(lines.len());
+
+    lines[start] = header_for(new);
+    for line in &mut lines[start + 1..end] {
+        if line_sets_key(line, "credential_process") {
+            *line = line.replace(&format!("--profile {old}"), &format!("--profile {new}"));
+        }
+    }
+
+    let mut out = lines.join("\n");
+    if had_trailing_newline && !out.is_empty() {
+        out.push('\n');
+    }
+    let tmp = path.with_extension("sleipnir-tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, path)
 }
 
 #[cfg(test)]
@@ -225,6 +296,51 @@ region=us-east-1
         assert!(out.ends_with(
             "\n[profile core-services]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile core-services\nregion = us-east-2\n"
         ));
+    }
+
+    /// A pre-existing profile with SSO config: those keys outrank
+    /// credential_process in the CLI chain, so engage must comment them
+    /// out or the engagement is cosmetic (rail says READONLY, terminal
+    /// gets whatever the old SSO config grants).
+    #[test]
+    fn engage_disables_conflicting_credential_sources() {
+        let initial = "\
+[profile gitf]
+ca_bundle = /Users/mp/.vpb/ca-bundle.pem
+# GhostInTheFactory-Production via IAM Identity Center
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 515020252848
+sso_role_name = AccountAdmin
+region = us-east-1
+";
+        let out = run(initial, &[keys("gitf", &[("credential_process", "X creds --profile gitf"), ("region", "us-east-1")])]);
+        assert!(out.contains("# sleipnir-disabled: sso_start_url = https://example.awsapps.com/start\n"));
+        assert!(out.contains("# sleipnir-disabled: sso_role_name = AccountAdmin\n"));
+        // Non-credential keys and comments untouched.
+        assert!(out.contains("\nca_bundle = /Users/mp/.vpb/ca-bundle.pem\n"));
+        assert!(out.contains("\n# GhostInTheFactory-Production via IAM Identity Center\n"));
+        assert!(out.contains("\nregion = us-east-1\n"));
+        assert!(out.contains("\ncredential_process = X creds --profile gitf\n"));
+    }
+
+    #[test]
+    fn rename_moves_header_and_credential_process_only() {
+        let dir = std::env::temp_dir().join(format!("sleipnir-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cfg-rename");
+        std::fs::write(
+            &path,
+            "[profile ghostinthefactory]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile ghostinthefactory\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n",
+        )
+        .unwrap();
+        rename_profile(&path, "ghostinthefactory", "gitf").unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            out,
+            "[profile gitf]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile gitf\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n"
+        );
     }
 
     #[test]

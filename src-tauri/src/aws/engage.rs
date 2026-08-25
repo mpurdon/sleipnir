@@ -185,7 +185,14 @@ fn resolve_target(account: &Account, env: Env, mode: Mode, default_region: &str)
                 env: effective_env,
                 mode: m,
                 role_name,
-                region: target.region.clone().unwrap_or_else(|| default_region.to_string()),
+                // Defensive lowercase — an uppercased region in config
+                // poisons SigV4 signatures for every credential downstream.
+                region: target
+                    .region
+                    .clone()
+                    .unwrap_or_else(|| default_region.to_string())
+                    .trim()
+                    .to_lowercase(),
                 note,
             });
         }

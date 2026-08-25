@@ -49,6 +49,16 @@ pub fn write(alias: &str, creds: &CachedRoleCreds) -> io::Result<()> {
     std::fs::rename(tmp, p)
 }
 
+/// Carries the cached creds along with a profile rename. Missing source is
+/// fine (nothing cached yet).
+pub fn rename(old_alias: &str, new_alias: &str) -> io::Result<()> {
+    match std::fs::rename(path(old_alias), path(new_alias)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Missing file is fine — disengaging something already gone is a no-op.
 pub fn delete(alias: &str) -> io::Result<()> {
     match std::fs::remove_file(path(alias)) {
