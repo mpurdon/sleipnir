@@ -1,0 +1,166 @@
+Acme Cloud Dev
+Acme Cloud Prod
+Acme Cloud Staging
+Analytics Warehouse
+Archive Cold Storage
+Argo Export Development
+Argo Export Production
+Argo Export Staging
+Atlas Development
+Atlas Disability Development
+Atlas Disability Production
+Atlas Disability Sandbox
+Atlas Disability Staging
+Atlas Medical Development
+Atlas Medical Production
+Atlas Medical Sandbox
+Atlas Medical Staging
+Atlas Production
+Atlas Sandbox
+Atlas Staging
+Aurora Billing Development
+Aurora Billing Production
+Aurora Billing Sandbox
+Aurora Billing Staging
+Backup Vault
+Basil Import Development
+Basil Import Production
+Basil Import Staging
+Beacon Development
+Beacon Production
+Beacon Sandbox
+Beacon Staging
+Billing Root
+Blue Team Toolkit
+Bughunt Sandbox
+Cargo Manager Development
+Cargo Manager Production
+Cargo Manager Sandbox
+Cargo Manager Staging
+Cedar Webhooks Development
+Cedar Webhooks Production
+Cedar Webhooks Staging
+Central Logging
+Chaos Lab
+Core Services Development
+Core Services Production
+Core Services Sandbox
+Core Services Staging
+Corp IT
+Widgets Team Dev & QA
+Delta Pipeline Development
+Delta Pipeline Production
+Delta Pipeline Sandbox
+Delta Pipeline Staging
+Docs Site Production
+Doppler Streams Development
+Doppler Streams Production
+Doppler Streams Staging
+Echo Gateway Development
+Echo Gateway Production
+Echo Gateway Sandbox
+Echo Gateway Staging
+Ember Cache Production
+Ember Cache Staging
+Falcon Api Development
+Falcon Api Production
+Falcon Api Sandbox
+Falcon Api Staging
+Flint Proxy Production
+Flint Proxy Staging
+Forensics
+Garnet Queue Production
+Garnet Queue Staging
+Grid Scheduler Development
+Grid Scheduler Production
+Grid Scheduler Sandbox
+Grid Scheduler Staging
+Harbor Ui Development
+Harbor Ui Production
+Harbor Ui Sandbox
+Harbor Ui Staging
+Hazel Vault Production
+Hazel Vault Staging
+Identity Root
+Ion Auth Development
+Ion Auth Production
+Ion Auth Sandbox
+Ion Auth Staging
+Jade Portal Development
+Jade Portal Production
+Jade Portal Sandbox
+Jade Portal Staging
+Kite Messaging Development
+Kite Messaging Production
+Kite Messaging Sandbox
+Kite Messaging Staging
+Legacy Billing Production
+Lumen Search Development
+Lumen Search Production
+Lumen Search Sandbox
+Lumen Search Staging
+ML Research
+Mail Relay Development
+Meteor Jobs Development
+Meteor Jobs Production
+Meteor Jobs Sandbox
+Meteor Jobs Staging
+Network Hub
+Nimbus Storage Development
+Nimbus Storage Production
+Nimbus Storage Sandbox
+Nimbus Storage Staging
+Orbit Crm Development
+Orbit Crm Production
+Orbit Crm Sandbox
+Orbit Crm Staging
+Partner Api Staging
+Print Farm Staging
+Pulse Metrics Development
+Pulse Metrics Production
+Pulse Metrics Sandbox
+Pulse Metrics Staging
+Quartz Reports Development
+Quartz Reports Production
+Quartz Reports Sandbox
+Quartz Reports Staging
+R&D Production
+Raven Notify Development
+Raven Notify Production
+Raven Notify Sandbox
+Raven Notify Staging
+Red Team Toolkit
+Security Watchtower
+Shared Media
+Sonar Ingest Development
+Sonar Ingest Production
+Sonar Ingest Sandbox
+Sonar Ingest Staging
+Telemetry Hub Staging
+Tide Payments Development
+Tide Payments Production
+Tide Payments Sandbox
+Tide Payments Staging
+Umbra Events Development
+Umbra Events Production
+Umbra Events Staging
+Vendor Exchange
+Vertex Docs Development
+Vertex Docs Production
+Vertex Docs Staging
+Willow Chat Development
+Willow Chat Production
+Willow Chat Staging
+Xenon Feed Development
+Xenon Feed Production
+Xenon Feed Staging
+Yarrow Console Development
+Yarrow Console Production
+Yarrow Console Staging
+Zephyr Sync Development
+Zephyr Sync Production
+Zephyr Sync Staging
+platform-tools-dev
+platform-tools-prd
+platform-tools-sandbox
+platform-tools-stg

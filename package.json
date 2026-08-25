@@ -1,0 +1,25 @@
+{
+  "name": "sleipnir",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot dev-server.ts",
+    "build": "bun build ./index.html --outdir=dist --minify --sourcemap=linked",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "@fontsource/jetbrains-mono": "^5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/bun": "^1",
+    "typescript": "^5"
+  }
+}

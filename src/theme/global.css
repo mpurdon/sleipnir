@@ -1,0 +1,111 @@
+@import "./tokens.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/jetbrains-mono/800.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* Every layer dark — a freshly exposed strip during the drawer's
+   * window-resize animation must never flash a lighter default. */
+  background: var(--c-void);
+}
+
+body {
+  background: var(--c-void);
+  color: var(--c-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Cyber label — small, bold, uppercase, tracked out. Used for every caption
+   in the app; the type scale is deliberately narrow (labels vs. one hero
+   numeral per panel) rather than a conventional heading hierarchy. */
+.label {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--c-dim);
+}
+
+.neon {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+.hover-glow {
+  transition:
+    filter 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+.hover-glow:hover {
+  filter: brightness(1.16);
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+input,
+select {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-text);
+  background: var(--c-void);
+  border: 1px solid var(--c-edge);
+  border-radius: 2px;
+  padding: 6px 8px;
+  user-select: text;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--c-cyan);
+}
+
+input::placeholder {
+  color: var(--c-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--c-cyan);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+}
+
+::selection {
+  background: var(--c-cyan);
+  color: var(--c-void);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-edge);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

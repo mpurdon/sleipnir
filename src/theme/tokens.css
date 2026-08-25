@@ -1,0 +1,23 @@
+/*
+  Palette ported 1:1 from vpb's CyberTheme.swift
+  (/Users/mp/Projects/vpb/macos/VpbApp/CyberTheme.swift).
+  Dark-only, deliberately — the glow effects wash out on a light ground.
+*/
+:root {
+  --c-void: #090b0e;
+  --c-panel: #111519;
+  --c-edge: #29303a;
+
+  --c-yellow: #fcee0a;
+  --c-cyan: #00e5ff;
+  --c-magenta: #ff2a6d;
+  --c-lime: #6dff4c;
+
+  --c-text: #e5ecf2;
+  --c-dim: #6d7e8d;
+
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace;
+
+  --chamfer-cut-lg: 8px;
+  --chamfer-cut-sm: 4px;
+}
