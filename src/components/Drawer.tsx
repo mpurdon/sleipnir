@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { DrawerSide } from "../lib/drawerWindow";
+import closeIcon from "../assets/close.png";
 
 /** Slide-out panel chrome: title bar with a close ✕, content scrolls. */
 export function Drawer({
@@ -23,7 +24,7 @@ export function Drawer({
           {title}
         </span>
         <button className="win-btn hover-glow" title="Close drawer" onClick={onClose}>
-          ×
+          <img src={closeIcon} alt="" className="close-icon" draggable={false} />
         </button>
       </div>
       <div className="drawer-body">{children}</div>

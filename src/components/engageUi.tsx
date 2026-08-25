@@ -1,5 +1,5 @@
 import type { AppState, Env, Mode } from "../lib/types";
-import { ENVS, ENV_LABELS, MODES } from "../lib/constants";
+import { ENVS, ENV_LABELS, MODES, sortEnvs } from "../lib/constants";
 import type { useEngage } from "../lib/useEngage";
 import { Slab } from "../theme";
 
@@ -12,6 +12,21 @@ export function defaultSel(state: AppState, key: string): Sel {
 
 export function modeMeta(mode: Mode) {
   return MODES.find((m) => m.key === mode)!;
+}
+
+/**
+ * Clamps a remembered/default selection to what a service or project
+ * actually offers: a single-env service pre-selects that env, and a
+ * missing mode falls to the best available (powerUser → readOnly →
+ * admin). Never shows "ENGAGE DEV/POWERUSER" on something that has
+ * neither.
+ */
+export function clampSel(sel: Sel, envs: Env[], modes: Mode[]): Sel {
+  const selectable = sortEnvs(envs.filter((e) => e !== "global"));
+  const env = selectable.includes(sel.env) ? sel.env : (selectable[0] ?? sel.env);
+  const preference: Mode[] = [sel.mode, "powerUser", "readOnly", "admin"];
+  const mode = modes.length > 0 ? preference.find((m) => modes.includes(m))! : sel.mode;
+  return { env, mode };
 }
 
 /** Small env/mode selector pills shared by project cards and service rows. */

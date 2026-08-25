@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Account, AppState, Env, Mode, Org, Project } from "../lib/types";
 import { ENV_LABELS } from "../lib/constants";
 import { useEngage } from "../lib/useEngage";
-import { defaultSel, EngageFeedback, modeMeta, SelPills, type Sel } from "./engageUi";
+import { clampSel, defaultSel, EngageFeedback, modeMeta, SelPills, type Sel } from "./engageUi";
 import { HoldButton } from "./HoldButton";
 import { NewProjectForm } from "./NewProjectForm";
 import { ProjectPanel } from "./ProjectPanel";
@@ -85,9 +85,8 @@ export function ProjectsDrawer({
         <ProjectPanel
           project={project}
           accounts={accounts}
-          org={org}
           state={state}
-          onStateChange={onStateChange}
+          onUpdate={onCreateProject}
           onBack={() => setView({ kind: "list" })}
         />
       );
@@ -106,16 +105,14 @@ export function ProjectsDrawer({
 
       {sorted.map((p) => {
         const key = `project:${p.name}`;
-        const s = sel(key);
+        const s = clampSel(sel(key), projectEnvs(p), projectModes(p));
         const pinned = state.pins.includes(p.name);
         const isPrdAdmin = s.env === "prd" && s.mode === "admin";
         const last = state.lastEngage[key];
         return (
           <Slab key={p.name} tint={pinned ? "var(--c-cyan)" : "var(--c-edge)"} className="project-card home-card">
             <div className="home-card-head">
-              <button className="home-card-name hover-glow" onClick={() => setView({ kind: "detail", name: p.name })} title="Open project">
-                {p.name}
-              </button>
+              <span className="home-card-name">{p.name}</span>
               <button
                 className={`pin-btn hover-glow${pinned ? " pin-btn-on" : ""}`}
                 title={pinned ? "Unpin" : "Pin to front"}
@@ -142,9 +139,19 @@ export function ProjectsDrawer({
               }
               className="home-card-engage"
             />
-            <button className="label hover-glow card-change-link" onClick={() => setEditingCard(editingCard === key ? null : key)}>
-              {editingCard === key ? "DONE" : "CHANGE ENV/MODE"}
-            </button>
+            <div className="card-links">
+              <button className="label hover-glow card-change-link" onClick={() => setEditingCard(editingCard === key ? null : key)}>
+                {editingCard === key ? "DONE" : "CHANGE ENV/MODE"}
+              </button>
+              <button
+                className="label hover-glow card-change-link"
+                style={{ color: "var(--c-cyan)" }}
+                title="Add or remove this project's services"
+                onClick={() => setView({ kind: "detail", name: p.name })}
+              >
+                ✎ EDIT SERVICES
+              </button>
+            </div>
           </Slab>
         );
       })}

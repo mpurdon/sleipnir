@@ -23,6 +23,36 @@ export const ENV_LABELS: Record<Env, string> = {
   global: "GLOBAL",
 };
 
+/** Regions where AWS IAM Identity Center can be hosted — for the org
+ * region dropdown. Common North American choices first, then grouped. */
+export const SSO_REGIONS: string[] = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-2",
+  "ca-central-1",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "eu-central-1",
+  "eu-north-1",
+  "eu-south-1",
+  "ap-south-1",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-northeast-3",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-southeast-3",
+  "ap-east-1",
+  "sa-east-1",
+  "af-south-1",
+  "me-south-1",
+  "me-central-1",
+  "il-central-1",
+  "us-gov-east-1",
+  "us-gov-west-1",
+];
+
 /** Mirror of src-tauri/src/discovery.rs `classify_role` — keep in sync.
  * A role whose mode keyword is prefixed by an AWS service name
  * (CognitoReadOnly, IAMPowerUserAccess) is a dedicated special role,

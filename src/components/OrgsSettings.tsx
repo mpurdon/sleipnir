@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Org } from "../lib/types";
 import type { OrgConfig } from "../lib/tauri";
+import { SSO_REGIONS } from "../lib/constants";
 import { SectionRule, Slab } from "../theme";
 
 /**
@@ -114,7 +115,16 @@ export function OrgsSettings({
             carries a #/ route fragment sleipnir strips automatically but which usually means you copied the
             wrong page
           </span>
-          <input placeholder="REGION (e.g. us-east-2)" value={region} onChange={(e) => setRegion(e.target.value)} />
+          <select value={region} onChange={(e) => setRegion(e.target.value)}>
+            <option value="" disabled>
+              SSO REGION…
+            </option>
+            {SSO_REGIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
           <span className="label" style={{ color: "var(--c-dim)", textTransform: "none", letterSpacing: 0 }}>
             the SSO region, not necessarily where your workloads run — check Identity Center → Settings in the AWS
             console if unsure

@@ -26,9 +26,8 @@ export function SegmentedMeter({
             flex: 1,
             height,
             background: i < lit ? color : "var(--c-edge)",
-            opacity: i < lit ? 1 : 0.55,
-            boxShadow: i < lit ? `0 0 3px ${color}` : "none",
-            transition: "background 150ms ease-out, box-shadow 150ms ease-out",
+            opacity: i < lit ? 1 : 0.45,
+            transition: "background 150ms ease-out, opacity 150ms ease-out",
           }}
         />
       ))}

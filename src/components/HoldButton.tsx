@@ -29,7 +29,10 @@ export function HoldButton({
 }) {
   const [fraction, setFraction] = useState(0);
   const [holding, setHolding] = useState(false);
+  /** Set briefly when a hold is released early — coaches the gesture. */
+  const [aborted, setAborted] = useState(false);
   const raf = useRef<number | null>(null);
+  const abortTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef(0);
   const fired = useRef(false);
 
@@ -61,6 +64,12 @@ export function HoldButton({
 
   function endHold() {
     if (raf.current !== null) cancelAnimationFrame(raf.current);
+    // Released mid-hold: coach rather than silently reset.
+    if (!fired.current && fraction > 0.05 && fraction < 1) {
+      setAborted(true);
+      if (abortTimer.current) clearTimeout(abortTimer.current);
+      abortTimer.current = setTimeout(() => setAborted(false), 1400);
+    }
     setHolding(false);
     setFraction(0);
   }
@@ -93,7 +102,14 @@ export function HoldButton({
       onKeyUp={endHold}
     >
       <span className="hold-btn-fill" style={{ width: `${fraction * 100}%`, background: color }} />
-      <span className="hold-btn-label">{holding ? (holdLabel ?? label) : label}</span>
+      <span className="hold-btn-stack">
+        <span className="hold-btn-label">{holding ? (holdLabel ?? label) : label}</span>
+        {!holding && (
+          <span className={`hold-btn-hint${aborted ? " hold-btn-hint-loud" : ""}`}>
+            {aborted ? "⏱ KEEP HOLDING UNTIL FULL" : "⏱ PRESS & HOLD"}
+          </span>
+        )}
+      </span>
     </button>
   );
 }

@@ -1,20 +1,21 @@
 /*
-  Palette ported 1:1 from vpb's CyberTheme.swift
-  (/Users/mp/Projects/vpb/macos/VpbApp/CyberTheme.swift).
-  Dark-only, deliberately — the glow effects wash out on a light ground.
+  Norse palette — carved iron, hoard gold, glacial ice, blood, moss.
+  Originally descended from vpb's CyberTheme; re-grounded away from neon
+  toward weathered metal and rune-stone. Variable names kept stable so the
+  whole app re-skins from here.
 */
 :root {
-  --c-void: #090b0e;
-  --c-panel: #111519;
-  --c-edge: #29303a;
+  --c-void: #0b0c10; /* the long night */
+  --c-panel: #14161b; /* dark iron */
+  --c-edge: #3e434c; /* forged edge */
 
-  --c-yellow: #fcee0a;
-  --c-cyan: #00e5ff;
-  --c-magenta: #ff2a6d;
-  --c-lime: #6dff4c;
+  --c-yellow: #d9a648; /* hoard gold */
+  --c-cyan: #8fc7d8; /* glacial ice */
+  --c-magenta: #c2454f; /* blood */
+  --c-lime: #8fae6e; /* moss bronze */
 
-  --c-text: #e5ecf2;
-  --c-dim: #6d7e8d;
+  --c-text: #d9dee3;
+  --c-dim: #79818b;
 
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace;
 

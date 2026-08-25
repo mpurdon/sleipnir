@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Org } from "../lib/types";
 import type { OrgConfig } from "../lib/tauri";
+import { SSO_REGIONS } from "../lib/constants";
 import { Slab } from "../theme";
 
 /** Strips a trailing `#/` route fragment and trailing slashes — the AWS
@@ -27,6 +28,7 @@ export function OrgDrawer({
   onSignOut,
   onLogin,
   onClose,
+  onAdded,
 }: {
   org: Org | null;
   loggingIn: boolean;
@@ -35,11 +37,16 @@ export function OrgDrawer({
   onSignOut: (name: string) => void;
   onLogin: (name: string) => void;
   onClose: () => void;
+  /** Called after a NEW org is saved and the user answered the
+   * log-in-now prompt — the app closes the drawer, selects the org, and
+   * starts the login when `loginNow`. */
+  onAdded: (name: string, loginNow: boolean) => void;
 }) {
   const [name, setName] = useState(org?.name ?? "");
   const [startUrl, setStartUrl] = useState(org?.startUrl ?? "");
   const [region, setRegion] = useState(org?.region ?? "");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [askLogin, setAskLogin] = useState(false);
 
   const dirty =
     !org || name.trim() !== org.name || sanitizeStartUrl(startUrl) !== org.startUrl || region.trim() !== org.region;
@@ -47,7 +54,29 @@ export function OrgDrawer({
   function submit() {
     if (!name.trim() || !startUrl.trim() || !region.trim()) return;
     onSave({ name: name.trim(), startUrl: sanitizeStartUrl(startUrl), region: region.trim() });
-    if (!org) onClose();
+    if (!org) setAskLogin(true);
+  }
+
+  if (askLogin) {
+    return (
+      <div className="drawer-stack">
+        <Slab tint="var(--c-cyan)" cut={5} className="org-drawer-status">
+          <span className="label" style={{ color: "var(--c-text)", flex: 1 }}>
+            {name.trim().toUpperCase()} ADDED — LOG IN NOW?
+          </span>
+          <button
+            className="engage-btn hover-glow"
+            style={{ background: "var(--c-cyan)", color: "var(--c-void)", padding: "8px 18px" }}
+            onClick={() => onAdded(name.trim(), true)}
+          >
+            LOG IN
+          </button>
+          <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={() => onAdded(name.trim(), false)}>
+            LATER
+          </button>
+        </Slab>
+      </div>
+    );
   }
 
   return (
@@ -77,7 +106,16 @@ export function OrgDrawer({
         <span className="label" style={{ color: "var(--c-dim)", textTransform: "none", letterSpacing: 0 }}>
           e.g. https://your-org.awsapps.com/start — the bare start URL, not one copied while browsing the portal
         </span>
-        <input placeholder="REGION (e.g. us-east-2)" value={region} onChange={(e) => setRegion(e.target.value)} />
+        <select value={region} onChange={(e) => setRegion(e.target.value)}>
+          <option value="" disabled>
+            SSO REGION…
+          </option>
+          {SSO_REGIONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
         <span className="label" style={{ color: "var(--c-dim)", textTransform: "none", letterSpacing: 0 }}>
           the SSO region — check Identity Center → Settings in the AWS console if unsure
         </span>

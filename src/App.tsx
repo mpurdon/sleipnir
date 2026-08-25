@@ -69,6 +69,9 @@ export function App() {
    * while the drawer slides. */
   const [railPx, setRailPx] = useState<number | null>(null);
   const [closing, setClosing] = useState(false);
+  /** Pulses the SERVICES menu item after adding an org — scan is the
+   * natural next step; cleared once the drawer is opened. */
+  const [highlightServices, setHighlightServices] = useState(false);
   /** Drives the drawer's CSS slide: "in" on mount, "out" before unmount. */
   const [drawerAnim, setDrawerAnim] = useState<"in" | "out">("in");
 
@@ -156,13 +159,18 @@ export function App() {
         projectCount={orgProjects.length}
         serviceCount={orgAccounts.length}
         activeDrawer={drawer?.kind ?? null}
-        onSelectOrg={(name) => {
+        onSelectOrg={(name) => setActiveOrg(name)}
+        onConfigureOrg={(name) => {
           setActiveOrg(name);
           void openDrawer({ kind: "org", name });
         }}
         onAddOrg={() => void openDrawer({ kind: "org", name: null })}
+        highlightServices={highlightServices}
         onOpenProjects={() => void (drawer?.kind === "projects" ? closeDrawer() : openDrawer({ kind: "projects" }))}
-        onOpenServices={() => void (drawer?.kind === "services" ? closeDrawer() : openDrawer({ kind: "services" }))}
+        onOpenServices={() => {
+          setHighlightServices(false);
+          void (drawer?.kind === "services" ? closeDrawer() : openDrawer({ kind: "services" }));
+        }}
         onOpenSettings={() => void (drawer?.kind === "settings" ? closeDrawer() : openDrawer({ kind: "settings" }))}
         onDisengage={disengageProfiles}
         onDisengageAll={disengageEverything}
@@ -220,6 +228,12 @@ export function App() {
               onSignOut={signOut}
               onLogin={(name) => void login(name)}
               onClose={() => void closeDrawer()}
+              onAdded={(name, loginNow) => {
+                setActiveOrg(name);
+                setHighlightServices(true);
+                void closeDrawer();
+                if (loginNow) void login(name);
+              }}
             />
           )}
 

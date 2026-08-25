@@ -34,14 +34,16 @@ body {
 .label {
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 9px;
+  font-size: 10.5px;
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: var(--c-dim);
 }
 
+/* Once neon bloom; now a faint cold sheen — enough to read as embers,
+ * not enough to read as a nightclub. */
 .neon {
-  filter: drop-shadow(0 0 6px currentColor);
+  filter: drop-shadow(0 0 2px currentColor);
 }
 
 .hover-glow {

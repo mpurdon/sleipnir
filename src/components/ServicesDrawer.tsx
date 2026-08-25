@@ -1,11 +1,62 @@
 import { useMemo, useState } from "react";
 import type { Account, AppState, Env, Mode, Org } from "../lib/types";
 import { accountName, ENVS, ENV_LABELS } from "../lib/constants";
+import { renameAccount } from "../lib/tauri";
+import { formatError } from "../lib/errors";
 import { useEngage } from "../lib/useEngage";
-import { defaultSel, EngageFeedback, modeMeta, SelPills, type Sel } from "./engageUi";
+import { clampSel, defaultSel, EngageFeedback, modeMeta, SelPills, type Sel } from "./engageUi";
 import { DiscoveryHero } from "./DiscoveryHero";
 import { HoldButton } from "./HoldButton";
 import { Slab } from "../theme";
+
+/** Inline editor for the AWS profile alias (`ghostinthefactory` → `gitf`). */
+function AliasEditor({ alias, onRenamed }: { alias: string; onRenamed: (next: string) => Promise<void> }) {
+  const [value, setValue] = useState(alias);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dirty = value.trim() !== alias;
+
+  async function submit() {
+    if (!dirty || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onRenamed(value.trim());
+    } catch (e) {
+      setError(formatError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="alias-editor">
+      <span className="label" style={{ color: "var(--c-dim)" }} title="AWS profile name">
+        PROFILE
+      </span>
+      <input
+        className="alias-input"
+        value={value}
+        spellCheck={false}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void submit();
+          if (e.key === "Escape") setValue(alias);
+        }}
+      />
+      {dirty && (
+        <button className="label hover-glow" style={{ color: "var(--c-cyan)" }} disabled={busy} onClick={() => void submit()}>
+          {busy ? "…" : "RENAME"}
+        </button>
+      )}
+      {error && (
+        <span className="label" style={{ color: "var(--c-magenta)", textTransform: "none" }}>
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function ServicesDrawer({
   org,
@@ -80,9 +131,9 @@ export function ServicesDrawer({
       <div className="catalog-rows">
         {filtered.map((a) => {
           const key = `service:${a.alias}`;
-          const s = sel(key);
           const envs = Object.keys(a.environments) as Env[];
           const modes = Object.keys(a.roles) as Mode[];
+          const s = clampSel(sel(key), envs, modes);
           const standalone = envs.length === 1 && envs[0] === "global";
           const engaged = state.engaged[a.alias];
           const isOpen = expanded === a.alias;
@@ -115,24 +166,46 @@ export function ServicesDrawer({
               </div>
               {isOpen && (
                 <div className="catalog-row-detail">
-                  <span className="label service-slug" title="AWS profile name">
-                    {a.alias}
-                  </span>
-                  <SelPills
-                    envs={standalone ? [] : envs}
-                    modes={modes}
-                    sel={s}
-                    onChange={(v) => setSels((prev) => ({ ...prev, [key]: v }))}
+                  <AliasEditor
+                    key={a.alias}
+                    alias={a.alias}
+                    onRenamed={async (next) => {
+                      const out = await renameAccount(a.alias, next);
+                      onImported(out.accounts);
+                      onStateChange(out.state);
+                      setExpanded(next);
+                    }}
                   />
-                  <HoldButton
-                    label={standalone ? `ENGAGE ${modeMeta(s.mode).label}` : `ENGAGE ${ENV_LABELS[s.env]}/${modeMeta(s.mode).label}`}
-                    holdLabel={`HOLD — ADMIN → ${ENV_LABELS[s.env]}`}
-                    color={!standalone && s.env === "prd" ? "var(--c-magenta)" : modeMeta(s.mode).color}
-                    requireHold={isPrdAdmin}
-                    disabled={eng.busy}
-                    onConfirm={() => void eng.run({ orgName: org.name, aliases: [a.alias], env: s.env, mode: s.mode })}
-                    className="catalog-engage"
-                  />
+                  <div className="catalog-row-controls">
+                    <SelPills
+                      envs={standalone ? [] : envs}
+                      modes={modes}
+                      sel={s}
+                      onChange={(v) => setSels((prev) => ({ ...prev, [key]: v }))}
+                    />
+                    <HoldButton
+                      label={standalone ? `ENGAGE ${modeMeta(s.mode).label}` : `ENGAGE ${ENV_LABELS[s.env]}/${modeMeta(s.mode).label}`}
+                      holdLabel={`HOLD — ADMIN → ${ENV_LABELS[s.env]}`}
+                      color={!standalone && s.env === "prd" ? "var(--c-magenta)" : modeMeta(s.mode).color}
+                      requireHold={isPrdAdmin}
+                      disabled={eng.busy}
+                      onConfirm={() =>
+                        // Re-engaging THIS service from its own row is
+                        // unambiguous intent — skip the repoint gate (it
+                        // exists for cross-project side effects, and a
+                        // single-alias engage can only "collide" with
+                        // itself).
+                        void eng.run({
+                          orgName: org.name,
+                          aliases: [a.alias],
+                          env: s.env,
+                          mode: s.mode,
+                          acknowledgeCollisions: true,
+                        })
+                      }
+                      className="catalog-engage"
+                    />
+                  </div>
                 </div>
               )}
             </Slab>

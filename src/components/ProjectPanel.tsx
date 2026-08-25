@@ -1,73 +1,64 @@
-import { useMemo, useState } from "react";
-import type { Account, AppState, Env, Mode, Org, Project } from "../lib/types";
-import { ENVS, ENV_LABELS, MODES } from "../lib/constants";
-import { useEngage, type RowStatus } from "../lib/useEngage";
-import { HoldButton } from "./HoldButton";
-import { SectionRule, SegmentedMeter, Slab } from "../theme";
+import { useState } from "react";
+import type { Account, AppState, Env, Project } from "../lib/types";
+import { accountName, ENV_LABELS, MODES, sortEnvs } from "../lib/constants";
+import { SectionRule, Slab } from "../theme";
 
-function statusLabel(r: RowStatus | undefined): string {
-  if (!r) return "";
-  switch (r.status) {
-    case "pending":
-      return "PENDING";
-    case "assuming":
-      return "ASSUMING ROLE";
-    case "done":
-      return "DONE";
-    case "failed":
-      return `FAILED — ${r.message ?? "unknown error"}`;
-  }
-}
-
-function statusColor(r: RowStatus | undefined): string {
-  if (!r) return "var(--c-dim)";
-  if (r.status === "failed") return "var(--c-magenta)";
-  if (r.status === "done") return "var(--c-lime)";
-  if (r.status === "pending") return "var(--c-dim)";
-  return "var(--c-cyan)";
-}
-
+/**
+ * Project EDIT view: membership changes are a local draft until SAVE —
+ * CANCEL (or the back link) discards. Engaging lives on the project card,
+ * not here.
+ */
 export function ProjectPanel({
   project,
   accounts,
-  org,
   state,
-  onStateChange,
+  onUpdate,
   onBack,
 }: {
   project: Project;
   accounts: Account[];
-  org: Org;
   state: AppState;
-  onStateChange: (s: AppState) => void;
+  /** Persists the edited project (same upsert as creation). */
+  onUpdate: (p: Project) => Promise<void> | void;
   onBack: () => void;
 }) {
+  const [members, setMembers] = useState<string[]>(project.members);
+  const [adding, setAdding] = useState(false);
+  const [addFilter, setAddFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const dirty =
+    members.length !== project.members.length || members.some((m, i) => project.members[i] !== m);
+
   const last = state.lastEngage[`project:${project.name}`];
-  const [env, setEnv] = useState<Env>(last?.env ?? "dev");
-  const [mode, setMode] = useState<Mode>(last?.mode ?? "powerUser");
-  const eng = useEngage(onStateChange);
-
-  const members = useMemo(
-    () => project.members.map((alias) => accounts.find((a) => a.alias === alias)).filter((a): a is Account => !!a),
-    [project, accounts],
-  );
-
-  const activeMode = MODES.find((m) => m.key === mode)!;
-  const isPrdAdmin = env === "prd" && mode === "admin";
-
-  function engage() {
-    void eng.run({ orgName: org.name, project: project.name, aliases: project.members, env, mode });
-  }
-
-  const rowEntries = Object.entries(eng.rows);
-  const doneFraction =
-    rowEntries.length > 0
-      ? rowEntries.filter(([, r]) => r.status === "done" || r.status === "failed").length / rowEntries.length
-      : 0;
-
   const lastLabel = last
     ? `LAST ENGAGED ${ENV_LABELS[last.env]}/${MODES.find((m) => m.key === last.mode)!.label} · ${new Date(last.atUnixMs).toLocaleString()}`
     : null;
+
+  const memberAccounts = members
+    .map((alias) => accounts.find((a) => a.alias === alias))
+    .filter((a): a is Account => !!a);
+
+  const q = addFilter.trim().toLowerCase();
+  const candidates = accounts
+    .filter(
+      (a) =>
+        a.org === project.org &&
+        !members.includes(a.alias) &&
+        (q === "" || a.alias.includes(q) || accountName(a).toLowerCase().includes(q)),
+    )
+    .sort((a, b) => accountName(a).localeCompare(accountName(b)));
+
+  async function save() {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      await onUpdate({ ...project, members });
+      onBack();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="project-panel">
@@ -82,103 +73,84 @@ export function ProjectPanel({
         </div>
       )}
 
-      <SectionRule title="Environment" />
-      <div className="pill-row">
-        {ENVS.map((e) => (
-          <button
-            key={e}
-            className={`pill${env === e ? " pill-active" : ""}${e === "prd" && env === e ? " pill-prd" : ""}`}
-            onClick={() => setEnv(e)}
-          >
-            {e.toUpperCase()}
-          </button>
-        ))}
-      </div>
-
-      <SectionRule title="Mode" />
-      <div className="pill-row">
-        {MODES.map((m) => (
-          <button
-            key={m.key}
-            className={`pill${mode === m.key ? " pill-active" : ""}`}
-            style={mode === m.key ? { background: m.color, color: "var(--c-void)" } : undefined}
-            onClick={() => setMode(m.key)}
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {eng.error && (
-        <Slab tint="var(--c-magenta)" cut={5} className="discovery-error-box">
-          {eng.error}
-        </Slab>
-      )}
-
-      {eng.collisions && (
-        <Slab tint="var(--c-yellow)" cut={5} className="collision-box">
-          <div className="label" style={{ color: "var(--c-yellow)" }}>
-            ⚠ ALREADY ENGAGED DIFFERENTLY — TERMINALS USING THESE PROFILES WILL BE REPOINTED
-          </div>
-          {eng.collisions.map((c) => (
-            <div key={c.alias} className="label collision-line">
-              {c.alias} is currently {ENV_LABELS[c.current.env]}/{MODES.find((m) => m.key === c.current.mode)!.label}
-              {c.current.project ? ` (via ${c.current.project})` : ""}
-            </div>
-          ))}
-          <div className="collision-actions">
-            <button className="label hover-glow" style={{ color: "var(--c-yellow)" }} onClick={eng.acknowledgeCollisions}>
-              ENGAGE ANYWAY
-            </button>
-            <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={eng.dismissCollisions}>
-              CANCEL
-            </button>
-          </div>
-        </Slab>
-      )}
-
-      <SectionRule title="Members" />
+      <SectionRule title={`Members (${members.length})`} />
       <div className="member-list">
-        {members.map((a) => {
-          const row = eng.rows[a.alias];
-          const target = a.environments[env] ?? a.environments.global;
-          const note = eng.outcome?.succeeded.find((s) => s.alias === a.alias)?.note;
-          return (
-            <Slab key={a.alias} cut={5} className="member-row">
-              <span className="service-display-name member-alias">{a.displayName || a.alias}</span>
-              <span className="label service-slug">{a.alias}</span>
-              <span className="label" style={{ color: "var(--c-dim)" }}>
-                {target ? target.accountId : `no ${ENV_LABELS[env]} account`}
-              </span>
-              <span className="label" style={{ color: statusColor(row), marginLeft: "auto" }}>
-                {statusLabel(row)}
-                {note ? ` · ${note}` : ""}
-              </span>
-            </Slab>
-          );
-        })}
+        {memberAccounts.map((a) => (
+          <Slab key={a.alias} cut={5} className="member-row">
+            <span className="service-display-name member-alias">{accountName(a)}</span>
+            <span className="label service-slug">{a.alias}</span>
+            <div className="env-chips">
+              {sortEnvs(Object.keys(a.environments) as Env[]).map((e) => (
+                <span key={e} className="label env-chip">
+                  {ENV_LABELS[e]}
+                </span>
+              ))}
+            </div>
+            <button
+              className="member-remove hover-glow"
+              title={`Remove ${a.alias} from ${project.name}`}
+              onClick={() => setMembers((prev) => prev.filter((m) => m !== a.alias))}
+            >
+              ✕
+            </button>
+          </Slab>
+        ))}
+        {members.length === 0 && (
+          <div className="label" style={{ color: "var(--c-dim)" }}>
+            NO MEMBERS — ADD SOME SERVICES BELOW
+          </div>
+        )}
       </div>
 
-      {rowEntries.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <SegmentedMeter fraction={doneFraction} color={activeMode.color} />
+      {adding ? (
+        <div className="add-member-box">
+          <div className="catalog-toolbar">
+            <input
+              className="catalog-filter"
+              placeholder="Type to find a service…"
+              value={addFilter}
+              onChange={(e) => setAddFilter(e.target.value)}
+              autoFocus
+            />
+            <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={() => setAdding(false)}>
+              DONE
+            </button>
+          </div>
+          <div className="member-list add-member-list">
+            {candidates.map((a) => (
+              <button
+                key={a.alias}
+                className="checkbox-row hover-glow"
+                title={`Add ${a.alias} to ${project.name}`}
+                onClick={() => setMembers((prev) => [...prev, a.alias])}
+              >
+                <span className="label" style={{ color: "var(--c-cyan)" }}>
+                  +
+                </span>
+                <span className="service-display-name">{accountName(a)}</span>
+                <span className="label service-slug">{a.alias}</span>
+              </button>
+            ))}
+          </div>
         </div>
+      ) : (
+        <button className="label hover-glow" style={{ color: "var(--c-cyan)", alignSelf: "flex-start" }} onClick={() => setAdding(true)}>
+          + ADD SERVICES
+        </button>
       )}
 
       <div className="engage-actions">
-        <HoldButton
-          label={eng.busy ? "ENGAGING…" : `ENGAGE ${ENV_LABELS[env]}/${activeMode.label}`}
-          holdLabel={`HOLD — ADMIN → ${ENV_LABELS[env]}`}
-          color={env === "prd" ? "var(--c-magenta)" : activeMode.color}
-          requireHold={isPrdAdmin}
-          disabled={eng.busy || members.length === 0}
-          onConfirm={engage}
-        />
-        {!eng.busy && eng.outcome && eng.outcome.failed.length > 0 && (
-          <button className="label hover-glow" style={{ color: "var(--c-yellow)" }} onClick={eng.retryFailed}>
-            RETRY FAILED ({eng.outcome.failed.length})
-          </button>
-        )}
+        <button
+          className="engage-btn hover-glow"
+          style={{ background: "var(--c-cyan)", color: "var(--c-void)" }}
+          disabled={!dirty || saving}
+          onClick={() => void save()}
+        >
+          {saving ? "SAVING…" : "SAVE"}
+        </button>
+        <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={onBack}>
+          CANCEL
+        </button>
       </div>
     </div>
   );
