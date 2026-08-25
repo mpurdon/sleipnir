@@ -242,13 +242,27 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
 /// only when a real interactive login is required.
 pub async fn ensure_fresh_token(org: &OrgConfig) -> Option<CachedToken> {
     if let Some(cached) = token_cache::read(&org.name) {
-        if !is_expired(&cached.expires_at) {
+        // Refresh a little early so nothing ever observes an expired
+        // token — the background upkeep tick rolls it over seamlessly.
+        if !expires_within(&cached.expires_at, 300) {
             return Some(cached);
         }
     }
 
-    let reg = kr::load_client_registration(&org.name)?;
-    let refresh_token = kr::load_refresh_token(&org.name)?;
+    let Some(reg) = kr::load_client_registration(&org.name) else {
+        applog::warn(
+            format!("{}: no OIDC client registration in keychain — interactive login required", org.name),
+            &json!({"org": org.name}),
+        );
+        return None;
+    };
+    let Some(refresh_token) = kr::load_refresh_token(&org.name) else {
+        applog::warn(
+            format!("{}: no refresh token in keychain — interactive login required", org.name),
+            &json!({"org": org.name}),
+        );
+        return None;
+    };
     let client = oidc_client(&org.region);
     match refresh_access_token(&client, org, &reg, &refresh_token).await {
         Ok(cached) => {
@@ -320,9 +334,13 @@ fn finish_login(
 }
 
 pub(crate) fn is_expired(expires_at_rfc3339: &str) -> bool {
+    expires_within(expires_at_rfc3339, 0)
+}
+
+pub(crate) fn expires_within(expires_at_rfc3339: &str, margin_secs: i64) -> bool {
     // Zero-padded fixed-width `YYYY-MM-DDTHH:MM:SSZ` sorts lexicographically
     // in chronological order, so this needs no date parsing.
-    expires_at_rfc3339 <= chrono_free_rfc3339(now_unix()).as_str()
+    expires_at_rfc3339 <= chrono_free_rfc3339(now_unix() + margin_secs).as_str()
 }
 
 /// RFC3339 UTC formatting without pulling in `chrono` as a dependency —

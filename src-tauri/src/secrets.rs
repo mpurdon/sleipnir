@@ -4,18 +4,72 @@
 //! AWS-CLI-compatible cache (see `aws::token_cache`), deliberately matching
 //! AWS CLI's own security model since sleipnir must read/write that exact
 //! file for interop anyway.
+//!
+//! Everything lives in ONE keychain item per org (a JSON blob) — macOS
+//! shows an access prompt per item, so the earlier four-items-per-org
+//! layout meant four password prompts in a row. Legacy four-item entries
+//! are migrated into the blob on first read, then deleted.
 
 use keyring::Entry;
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SERVICE: &str = "dev.purdonmoi.sleipnir";
-
-fn entry(kind: &str, org: &str) -> Result<Entry, keyring::Error> {
-    Entry::new(SERVICE, &format!("{kind}:{org}"))
-}
+const LEGACY_KINDS: [&str; 4] = ["client_id", "client_secret", "client_reg_expires_at", "refresh_token"];
 
 fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SecretBlob {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    client_reg_expires_at: Option<i64>,
+    refresh_token: Option<String>,
+}
+
+fn blob_entry(org: &str) -> Result<Entry, keyring::Error> {
+    Entry::new(SERVICE, &format!("secrets:{org}"))
+}
+
+fn load_blob(org: &str) -> SecretBlob {
+    if let Ok(entry) = blob_entry(org) {
+        if let Ok(json) = entry.get_password() {
+            if let Ok(blob) = serde_json::from_str(&json) {
+                return blob;
+            }
+        }
+    }
+    migrate_legacy(org)
+}
+
+fn save_blob(org: &str, blob: &SecretBlob) -> Result<(), keyring::Error> {
+    blob_entry(org)?.set_password(&serde_json::to_string(blob).expect("serialize secret blob"))
+}
+
+/// One-time migration from the old four-items-per-org layout. Reading the
+/// legacy items may prompt once more; after this they're gone and only the
+/// single blob item remains.
+fn migrate_legacy(org: &str) -> SecretBlob {
+    let get = |kind: &str| {
+        Entry::new(SERVICE, &format!("{kind}:{org}"))
+            .ok()
+            .and_then(|e| e.get_password().ok())
+    };
+    let blob = SecretBlob {
+        client_id: get("client_id"),
+        client_secret: get("client_secret"),
+        client_reg_expires_at: get("client_reg_expires_at").and_then(|s| s.parse().ok()),
+        refresh_token: get("refresh_token"),
+    };
+    if blob.client_id.is_some() || blob.refresh_token.is_some() {
+        let _ = save_blob(org, &blob);
+        for kind in LEGACY_KINDS {
+            let _ = Entry::new(SERVICE, &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
+        }
+    }
+    blob
 }
 
 pub struct ClientRegistration {
@@ -27,49 +81,44 @@ pub struct ClientRegistration {
 }
 
 pub fn store_client_registration(org: &str, reg: &ClientRegistration) -> Result<(), keyring::Error> {
-    entry("client_id", org)?.set_password(&reg.client_id)?;
-    entry("client_secret", org)?.set_password(&reg.client_secret)?;
-    entry("client_reg_expires_at", org)?.set_password(&reg.expires_at.to_string())?;
-    Ok(())
+    let mut blob = load_blob(org);
+    blob.client_id = Some(reg.client_id.clone());
+    blob.client_secret = Some(reg.client_secret.clone());
+    blob.client_reg_expires_at = Some(reg.expires_at);
+    save_blob(org, &blob)
 }
 
 /// Returns `None` if nothing is cached, or if it's within 5 minutes of
 /// expiring (safety margin rather than racing a registration that just
 /// expired).
-///
-/// Verified quirk (keyring-rs 3.6.3, macOS `apple-native` backend, which
-/// uses the legacy `SecKeychain` API rather than `SecItem`): a `get_password`
-/// on a freshly constructed `Entry` can miss an item that a *different*
-/// `Entry` instance wrote moments earlier in the same process, even past a
-/// several-hundred-ms delay — read-your-writes only reliably holds when the
-/// same `Entry` instance is reused. That does not affect correctness here
-/// (`get_or_register_client` uses the freshly registered value directly
-/// rather than reading it back), only the "skip re-registration" optimation:
-/// it may occasionally miss within one long-running process and re-register
-/// with AWS, which is harmless — SSO OIDC client registration has no
-/// meaningful rate limit for normal interactive use.
 pub fn load_client_registration(org: &str) -> Option<ClientRegistration> {
-    let client_id = entry("client_id", org).ok()?.get_password().ok()?;
-    let client_secret = entry("client_secret", org).ok()?.get_password().ok()?;
-    let expires_at: i64 = entry("client_reg_expires_at", org).ok()?.get_password().ok()?.parse().ok()?;
+    let blob = load_blob(org);
+    let expires_at = blob.client_reg_expires_at?;
     if expires_at - 300 < now_unix() {
         return None;
     }
-    Some(ClientRegistration { client_id, client_secret, expires_at })
+    Some(ClientRegistration {
+        client_id: blob.client_id?,
+        client_secret: blob.client_secret?,
+        expires_at,
+    })
 }
 
 pub fn store_refresh_token(org: &str, token: &str) -> Result<(), keyring::Error> {
-    entry("refresh_token", org)?.set_password(token)
+    let mut blob = load_blob(org);
+    blob.refresh_token = Some(token.to_string());
+    save_blob(org, &blob)
 }
 
 pub fn load_refresh_token(org: &str) -> Option<String> {
-    entry("refresh_token", org).ok()?.get_password().ok()
+    load_blob(org).refresh_token
 }
 
-/// Removes every keyring entry for an Org — client registration and any
-/// refresh token. Used by sign-out. Missing entries are not an error.
+/// Removes every keyring entry for an Org — the blob plus any legacy
+/// items. Used by sign-out. Missing entries are not an error.
 pub fn clear_org(org: &str) {
-    for kind in ["client_id", "client_secret", "client_reg_expires_at", "refresh_token"] {
-        let _ = entry(kind, org).and_then(|e| e.delete_credential());
+    let _ = blob_entry(org).and_then(|e| e.delete_credential());
+    for kind in LEGACY_KINDS {
+        let _ = Entry::new(SERVICE, &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
     }
 }

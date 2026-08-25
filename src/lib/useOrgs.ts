@@ -5,6 +5,7 @@ import {
   listOrgs,
   loginOrg,
   onLoginProgress,
+  refreshSession,
   saveOrg,
   signOutOrg,
   type LoginProgress,
@@ -35,6 +36,42 @@ export function useOrgs() {
     });
 
     return () => unlisten.current?.();
+  }, []);
+
+  // Background session upkeep — the AWS access token only lives 1 hour,
+  // but the refresh token spans the whole SSO session (typically 8-12h).
+  // Rolling the access token over silently before it lapses means the
+  // user only ever sees the REAL session boundary, exactly like Leapp.
+  useEffect(() => {
+    let cancelled = false;
+    async function upkeep() {
+      let list: Org[];
+      try {
+        list = await listOrgs();
+      } catch {
+        return;
+      }
+      for (const org of list) {
+        if (cancelled) return;
+        const msLeft = org.tokenExpiresAt ? new Date(org.tokenExpiresAt).getTime() - Date.now() : -1;
+        // Refresh when lapsed or within 10 minutes of lapsing; a dead
+        // session fails harmlessly and stays visibly expired.
+        if (org.tokenExpiresAt !== null && msLeft < 10 * 60_000) {
+          try {
+            const updated = await refreshSession(org.name);
+            if (!cancelled) setOrgs((prev) => prev.map((o) => (o.name === updated.name ? updated : o)));
+          } catch {
+            /* headless refresh is best-effort */
+          }
+        }
+      }
+    }
+    void upkeep();
+    const id = setInterval(() => void upkeep(), 4 * 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
   const login = useCallback(async (name: string) => {
