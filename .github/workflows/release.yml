@@ -72,15 +72,15 @@ jobs:
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
         run: |
           if [ -z "$TAP_TOKEN" ]; then
-            echo "::notice::TAP_GITHUB_TOKEN not set — skipping tap bump. Update Casks/sleipnir.rb manually."
+            echo "::notice::TAP_GITHUB_TOKEN not set — skipping tap bump. Update Casks/sleipnir-aws.rb manually."
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
           SHA="${{ steps.pkg.outputs.sha }}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/mpurdon/homebrew-tap.git" tap
           cd tap
-          sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/sleipnir.rb
-          sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/sleipnir.rb
+          sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/sleipnir-aws.rb
+          sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/sleipnir-aws.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -am "sleipnir ${VERSION}"

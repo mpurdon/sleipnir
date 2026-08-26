@@ -15,7 +15,7 @@
 ## Install
 
 ```sh
-brew install --cask mpurdon/tap/sleipnir
+brew install --cask mpurdon/tap/sleipnir-aws
 ```
 
 Apple Silicon only for now. The app isn't notarized yet — if Gatekeeper
