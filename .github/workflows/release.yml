@@ -45,6 +45,28 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
+      # Signing + notarization activate automatically when the APPLE_*
+      # secrets exist; with them absent the build is ad-hoc signed (the
+      # pre-Developer-ID behavior). Tauri imports the certificate into a
+      # temporary keychain and runs notarytool + stapling itself.
+      - name: Configure signing & notarization
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          AID: ${{ secrets.APPLE_ID }}
+          APW: ${{ secrets.APPLE_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          put() { if [ -n "$2" ]; then printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV"; fi; }
+          put APPLE_CERTIFICATE "$CERT"
+          put APPLE_CERTIFICATE_PASSWORD "$CERT_PW"
+          put APPLE_SIGNING_IDENTITY "$IDENTITY"
+          put APPLE_ID "$AID"
+          put APPLE_PASSWORD "$APW"
+          put APPLE_TEAM_ID "$TEAM"
+          if [ -n "$CERT" ]; then echo "::notice::Developer ID signing enabled"; else echo "::notice::no signing secrets — building ad-hoc signed"; fi
+
       - name: Build app bundle
         # DMG bundling drives Finder via AppleScript and cannot run
         # headless — the cask installs from the .app tarball anyway.
