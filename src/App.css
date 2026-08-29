@@ -34,8 +34,19 @@
   padding: 12px 14px;
   background: var(--c-panel);
   border-right: 1px solid var(--c-edge);
-  overflow-y: auto;
+  /* The header (drag handle + window controls) stays frozen; only the
+   * content below it scrolls — see .rail-scroll. */
+  overflow: hidden;
   box-sizing: border-box;
+}
+
+.rail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .has-drawer .rail {

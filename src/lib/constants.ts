@@ -1,8 +1,21 @@
-import type { Account, Env, Mode } from "./types";
+import type { Account, Env, Mode, Org } from "./types";
 
 /** Human name for a service, falling back to the slug for old configs. */
 export function accountName(a: Account): string {
   return a.displayName || a.alias;
+}
+
+/** Milliseconds until the org's SSO access token expires; -1 when there is
+ * no session at all. THE single definition of session liveness — every
+ * lamp, label, tooltip, and click-to-login decision derives from here so
+ * the UI's promise and its behavior can't drift apart. */
+export function sessionMsLeft(org: Org): number {
+  if (!org.tokenExpiresAt) return -1;
+  return new Date(org.tokenExpiresAt).getTime() - Date.now();
+}
+
+export function isSessionAlive(org: Org): boolean {
+  return sessionMsLeft(org) > 0;
 }
 
 /** Selectable environments — `global` is deliberately absent: it's the

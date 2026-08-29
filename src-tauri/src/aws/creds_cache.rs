@@ -21,6 +21,37 @@ pub struct CachedRoleCreds {
     pub expiration_unix_ms: i64,
 }
 
+impl CachedRoleCreds {
+    /// The one place the SDK response maps into the cache shape — engage,
+    /// background rotation, and the CLI resolver all build through here.
+    pub fn from_sdk(
+        org: &str,
+        account_id: &str,
+        role_name: &str,
+        region: &str,
+        c: &aws_sdk_sso::types::RoleCredentials,
+    ) -> Self {
+        Self {
+            org: org.to_string(),
+            account_id: account_id.to_string(),
+            role_name: role_name.to_string(),
+            region: region.to_string(),
+            access_key_id: c.access_key_id().unwrap_or_default().to_string(),
+            secret_access_key: c.secret_access_key().unwrap_or_default().to_string(),
+            session_token: c.session_token().unwrap_or_default().to_string(),
+            expiration_unix_ms: c.expiration(),
+        }
+    }
+}
+
+/// True when the cached creds exist and won't expire within `margin_ms`.
+/// Missing/unreadable cache counts as NOT fresh.
+pub fn fresh_within(alias: &str, margin_ms: i64) -> bool {
+    read(alias)
+        .map(|c| c.expiration_unix_ms > crate::state::now_unix_ms() as i64 + margin_ms)
+        .unwrap_or(false)
+}
+
 fn cache_dir() -> PathBuf {
     dirs::home_dir().expect("home directory").join(".sleipnir").join("cache")
 }

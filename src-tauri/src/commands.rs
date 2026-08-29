@@ -1,5 +1,6 @@
 use crate::applog;
 use crate::aws::{creds_cache, engage, sso, sso_oidc, token_cache};
+use crate::config::aws_config_editor::{self, AwsFile};
 use crate::config::{self, Account, OrgConfig, Project};
 use crate::error::AppError;
 use crate::secrets;
@@ -76,7 +77,12 @@ pub fn sign_out_org(name: String) -> Result<OrgStatus, AppError> {
 pub async fn login_org(app: AppHandle, name: String) -> Result<OrgStatus, AppError> {
     let org = find_org(&name)?;
     match sso_oidc::login(&app, &org).await {
-        Ok(_) => Ok(status_for(&org)),
+        Ok(_) => {
+            // A fresh session means stale static keys can rotate NOW —
+            // don't leave expired credentials lying around for a tick.
+            let _ = refresh_engaged_credentials().await;
+            Ok(status_for(&org))
+        }
         Err(e) => {
             let app_err: AppError = e.into();
             applog::error("login_org failed", &json!({"name": name, "error": app_err.to_string()}));
@@ -240,10 +246,18 @@ pub async fn engage(app: AppHandle, request: engage::EngageRequest) -> Result<en
     Ok(outcome)
 }
 
-/// Stand-down: removes profiles from the engaged map (the authority the
-/// creds resolver honors) and deletes their cached role credentials. The
-/// `~/.aws/config` stanzas stay — a disengaged profile simply refuses to
-/// resolve until re-engaged.
+/// Physically strips the static keys for the given profiles from
+/// ~/.aws/credentials in one write — with static-key delivery, disengage
+/// means the secrets are GONE, not merely refused. Key list is owned by
+/// engage so write and strip can never disagree.
+fn strip_static_keys(profiles: &[String]) {
+    let refs: Vec<&str> = profiles.iter().map(String::as_str).collect();
+    let _ = aws_config_editor::remove_profiles_keys(AwsFile::Credentials, &refs, &engage::STATIC_CRED_KEYS);
+}
+
+/// Stand-down: removes profiles from the engaged map, deletes their cached
+/// role credentials, and strips the static keys out of
+/// `~/.aws/credentials`. The `~/.aws/config` stanza (region) stays.
 #[tauri::command]
 pub fn disengage(profiles: Vec<String>) -> Result<state::AppState, AppError> {
     let mut st = state::load();
@@ -251,6 +265,7 @@ pub fn disengage(profiles: Vec<String>) -> Result<state::AppState, AppError> {
         st.engaged.remove(p);
         let _ = creds_cache::delete(p);
     }
+    strip_static_keys(&profiles);
     state::save(&st)?;
     applog::info(format!("disengaged {} profile(s)", profiles.len()), &json!({"profiles": profiles}));
     Ok(st)
@@ -263,10 +278,26 @@ pub fn disengage_all() -> Result<state::AppState, AppError> {
     for p in &profiles {
         let _ = creds_cache::delete(p);
     }
+    strip_static_keys(&profiles);
     st.engaged.clear();
     state::save(&st)?;
     applog::info(format!("disengaged ALL ({} profile(s))", profiles.len()), &json!({"profiles": profiles}));
     Ok(st)
+}
+
+/// Background credential rotation for static-key delivery. The schedule
+/// lives in the backend (see lib.rs setup); this command exists so the
+/// frontend can also trigger an immediate pass. Skips instantly when
+/// nothing is engaged.
+#[tauri::command]
+pub async fn refresh_engaged_credentials() -> Result<usize, AppError> {
+    let st = state::load();
+    if st.engaged.is_empty() {
+        return Ok(0);
+    }
+    let entries: Vec<(String, state::EngagedProfile)> = st.engaged.into_iter().collect();
+    let orgs = config::load_or_seed().orgs;
+    Ok(engage::rotate_stale_profiles(&orgs, &entries, engage::ROTATE_MARGIN_MS).await)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -286,6 +317,16 @@ pub struct ProfileTest {
 /// STS — the exact path every terminal uses. Nothing simulated.
 #[tauri::command]
 pub async fn test_profile(alias: String) -> Result<ProfileTest, AppError> {
+    // Self-heal before probing: a stale engaged profile (e.g. the org's
+    // session just came back after days away) gets its static keys
+    // rotated first — same policy as the background tick — so the test
+    // reports the health of the live path, not yesterday's leftovers.
+    let st = state::load();
+    if let Some(entry) = st.engaged.get(&alias) {
+        let orgs = config::load_or_seed().orgs;
+        let _ = engage::rotate_stale_profiles(&orgs, &[(alias.clone(), entry.clone())], engage::ROTATE_MARGIN_MS).await;
+    }
+
     let started = std::time::Instant::now();
     let run = tokio::process::Command::new("aws")
         .args(["sts", "get-caller-identity", "--profile", &alias, "--output", "json"])
@@ -388,12 +429,10 @@ pub fn rename_account(old_alias: String, new_alias: String) -> Result<RenameOutc
     }
 
     let _ = creds_cache::rename(&old_alias, &new_alias);
-    if let Err(e) = config::aws_config_editor::rename_profile(
-        &config::aws_config_editor::default_path(),
-        &old_alias,
-        &new_alias,
-    ) {
-        applog::error("rename_account: aws config rename failed", &json!({"error": e.to_string()}));
+    for file in [AwsFile::Config, AwsFile::Credentials] {
+        if let Err(e) = aws_config_editor::rename_profile(file, &old_alias, &new_alias) {
+            applog::error("rename_account: aws file rename failed", &json!({"file": format!("{file:?}"), "error": e.to_string()}));
+        }
     }
 
     applog::info(

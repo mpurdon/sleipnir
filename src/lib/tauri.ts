@@ -126,6 +126,9 @@ export const setPin = (project: string, pinned: boolean) => invoke<AppState>("se
 export const engage = (request: EngageRequest) => invoke<EngageOutcome>("engage", { request });
 export const disengage = (profiles: string[]) => invoke<AppState>("disengage", { profiles });
 export const disengageAll = () => invoke<AppState>("disengage_all");
+/** Rotates static ~/.aws/credentials keys for engaged profiles nearing
+ * expiry; returns how many were refreshed. */
+export const refreshEngagedCredentials = () => invoke<number>("refresh_engaged_credentials");
 
 export function onEngageProgress(cb: (p: EngageProgressEvent) => void): Promise<() => void> {
   return listen<EngageProgressEvent>("engage:progress", (e) => cb(e.payload));

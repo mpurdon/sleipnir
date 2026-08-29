@@ -5,6 +5,7 @@ import { ProjectsDrawer } from "./components/ProjectsDrawer";
 import { ServicesDrawer } from "./components/ServicesDrawer";
 import { OrgDrawer } from "./components/OrgDrawer";
 import { SettingsView } from "./components/SettingsView";
+import { isSessionAlive } from "./lib/constants";
 import { useOrgs } from "./lib/useOrgs";
 import { useConfig } from "./lib/useConfig";
 import { useAppState } from "./lib/useAppState";
@@ -35,6 +36,7 @@ export function App() {
     orgs,
     login,
     refresh: refreshOrgs,
+    refreshOne,
     activeLoginName,
     activeLoginProgress,
     addOrg,
@@ -137,8 +139,7 @@ export function App() {
   const error = orgsError ?? configError ?? stateError;
 
   const activeOrgObj = activeOrg ? orgs.find((o) => o.name === activeOrg) : null;
-  const activeOrgNeedsLogin =
-    !activeOrgObj?.tokenExpiresAt || new Date(activeOrgObj.tokenExpiresAt).getTime() <= Date.now();
+  const activeOrgNeedsLogin = !activeOrgObj || !isSessionAlive(activeOrgObj);
 
   const onStateChangeWithOrgRefresh = (s: typeof appState) => {
     replaceState(s);
@@ -159,7 +160,13 @@ export function App() {
         projectCount={orgProjects.length}
         serviceCount={orgAccounts.length}
         activeDrawer={drawer?.kind ?? null}
-        onSelectOrg={(name) => setActiveOrg(name)}
+        onSelectOrg={(name) => {
+          setActiveOrg(name);
+          // Dead session? The click IS the reconnect — start login
+          // immediately instead of making the user find a button.
+          const org = orgs.find((o) => o.name === name);
+          if (!org || !isSessionAlive(org)) void login(name);
+        }}
         onConfigureOrg={(name) => {
           setActiveOrg(name);
           void openDrawer({ kind: "org", name });
@@ -227,6 +234,7 @@ export function App() {
               onDelete={removeOrg}
               onSignOut={signOut}
               onLogin={(name) => void login(name)}
+              onRefresh={(name) => void refreshOne(name)}
               onClose={() => void closeDrawer()}
               onAdded={(name, loginNow) => {
                 setActiveOrg(name);

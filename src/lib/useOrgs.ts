@@ -98,6 +98,17 @@ export function useOrgs() {
       .catch(() => {});
   }, []);
 
+  /** Silent single-org token refresh, mapped surgically into state — the
+   * drawer's ↻ REFRESH action. */
+  const refreshOne = useCallback(async (name: string) => {
+    try {
+      const updated = await refreshSession(name);
+      setOrgs((prev) => prev.map((o) => (o.name === updated.name ? updated : o)));
+    } catch (e) {
+      setError(`Failed to refresh ${name}: ${formatError(e)}`);
+    }
+  }, []);
+
   const addOrg = useCallback(async (org: OrgConfig) => {
     try {
       setOrgs(await saveOrg(org));
@@ -123,5 +134,5 @@ export function useOrgs() {
     }
   }, []);
 
-  return { orgs, login, refresh, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
+  return { orgs, login, refresh, refreshOne, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
 }

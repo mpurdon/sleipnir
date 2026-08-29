@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Org } from "../lib/types";
 import type { OrgConfig } from "../lib/tauri";
-import { SSO_REGIONS } from "../lib/constants";
+import { sessionMsLeft, SSO_REGIONS } from "../lib/constants";
 import { Slab } from "../theme";
 
 /** Strips a trailing `#/` route fragment and trailing slashes — the AWS
@@ -11,12 +11,18 @@ function sanitizeStartUrl(raw: string): string {
   return raw.trim().split("#")[0]!.replace(/\/+$/, "");
 }
 
-function status(org: Org): { label: string; color: string } {
-  if (!org.tokenExpiresAt) return { label: "NOT LOGGED IN", color: "var(--c-magenta)" };
-  const msLeft = new Date(org.tokenExpiresAt).getTime() - Date.now();
-  if (msLeft <= 0) return { label: "SESSION EXPIRED", color: "var(--c-magenta)" };
+function status(org: Org): { label: string; color: string; alive: boolean } {
+  const msLeft = sessionMsLeft(org);
+  if (msLeft <= 0) {
+    const label = org.tokenExpiresAt ? "SESSION EXPIRED" : "NOT LOGGED IN";
+    return { label, color: "var(--c-magenta)", alive: false };
+  }
   const mins = Math.floor(msLeft / 60_000);
-  return { label: `LOGGED IN · ${mins >= 60 ? `${Math.floor(mins / 60)}H ${mins % 60}M` : `${mins}M`} LEFT`, color: "var(--c-lime)" };
+  return {
+    label: `LOGGED IN · ${mins >= 60 ? `${Math.floor(mins / 60)}H ${mins % 60}M` : `${mins}M`} LEFT`,
+    color: "var(--c-lime)",
+    alive: true,
+  };
 }
 
 /** Config + session control for one org (or a blank form when adding). */
@@ -27,6 +33,7 @@ export function OrgDrawer({
   onDelete,
   onSignOut,
   onLogin,
+  onRefresh,
   onClose,
   onAdded,
 }: {
@@ -36,6 +43,8 @@ export function OrgDrawer({
   onDelete: (name: string) => void;
   onSignOut: (name: string) => void;
   onLogin: (name: string) => void;
+  /** Silent token refresh — the button shown while the session is alive. */
+  onRefresh: (name: string) => void;
   onClose: () => void;
   /** Called after a NEW org is saved and the user answered the
    * log-in-now prompt — the app closes the drawer, selects the org, and
@@ -81,24 +90,36 @@ export function OrgDrawer({
 
   return (
     <div className="drawer-stack">
-      {org && (
-        <div className="org-drawer-status">
-          <span className="label" style={{ color: status(org).color }}>
-            {status(org).label}
-          </span>
-          <button
-            className="label hover-glow"
-            style={{ color: "var(--c-cyan)" }}
-            disabled={loggingIn}
-            onClick={() => onLogin(org.name)}
-          >
-            {loggingIn ? "LOGGING IN…" : "LOG IN"}
-          </button>
-          <button className="label hover-glow" style={{ color: "var(--c-yellow)" }} onClick={() => onSignOut(org.name)}>
-            SIGN OUT
-          </button>
-        </div>
-      )}
+      {org &&
+        (() => {
+          const st = status(org);
+          return (
+            <div className="org-drawer-status">
+              <span className="label" style={{ color: st.color }}>
+                {st.label}
+              </span>
+              {st.alive ? (
+                <>
+                  <button className="label hover-glow" style={{ color: "var(--c-cyan)" }} onClick={() => onRefresh(org.name)}>
+                    ↻ REFRESH
+                  </button>
+                  <button className="label hover-glow" style={{ color: "var(--c-yellow)" }} onClick={() => onSignOut(org.name)}>
+                    SIGN OUT
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="label hover-glow"
+                  style={{ color: "var(--c-cyan)" }}
+                  disabled={loggingIn}
+                  onClick={() => onLogin(org.name)}
+                >
+                  {loggingIn ? "LOGGING IN…" : "LOG IN"}
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
       <Slab cut={5} className="add-org-form">
         <input placeholder="ORG NAME (e.g. personal)" value={name} onChange={(e) => setName(e.target.value)} disabled={!!org} autoFocus={!org} />

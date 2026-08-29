@@ -1,16 +1,16 @@
 //! Real Engage: resolve each target service's account + role for the
 //! requested env/mode, fetch role credentials via `GetRoleCredentials`,
-//! seed the per-profile creds cache, wire `~/.aws/config` stanzas
-//! (`credential_process` delivery), and record the engagement in
-//! `state.json`. Partial failure is first-class — one service failing
-//! never blocks the rest.
+//! seed the per-profile creds cache, deliver static keys into
+//! `~/.aws/credentials` (works for every consumer, sandboxed ones
+//! included), and record the engagement in `state.json`. Partial failure
+//! is first-class — one service failing never blocks the rest.
 
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::applog;
-use crate::config::aws_config_editor::{self, ProfileKeys};
+use crate::config::aws_config_editor::{self, AwsFile, ProfileKeys};
 use crate::config::{Account, Env, Mode, OrgConfig};
 use crate::discovery::classify_role;
 use crate::state::{self, EngagedProfile};
@@ -37,6 +37,55 @@ pub fn mode_label(mode: Mode) -> &'static str {
         Mode::PowerUser => "POWERUSER",
         Mode::Admin => "ADMIN",
     }
+}
+
+/// The static-credential key names — the single owner both the write
+/// side (engage / rotation) and the strip side (disengage) consume, so
+/// they can never disagree.
+pub const STATIC_CRED_KEYS: [&str; 3] = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"];
+
+/// The ~/.aws/credentials stanza for one profile's static keys.
+fn static_cred_writes(alias: &str, creds: &CachedRoleCreds) -> ProfileKeys {
+    ProfileKeys {
+        profile: alias.to_string(),
+        keys: vec![
+            (STATIC_CRED_KEYS[0].to_string(), creds.access_key_id.clone()),
+            (STATIC_CRED_KEYS[1].to_string(), creds.secret_access_key.clone()),
+            (STATIC_CRED_KEYS[2].to_string(), creds.session_token.clone()),
+        ],
+    }
+}
+
+/// One `GetRoleCredentials` round-trip mapped into the cache shape — the
+/// shared fetch used by engage's fan-out and background rotation.
+async fn fetch_role_creds(
+    client: &aws_sdk_sso::Client,
+    access_token: &str,
+    org_name: &str,
+    account_id: &str,
+    role_name: &str,
+    region: &str,
+) -> Result<CachedRoleCreds, String> {
+    let out = send_retrying(format!("GetRoleCredentials({account_id}/{role_name})"), || {
+        client
+            .get_role_credentials()
+            .access_token(access_token)
+            .account_id(account_id)
+            .role_name(role_name)
+            .send()
+    })
+    .await
+    .map_err(|e| {
+        if is_retryable(&e) {
+            "AWS rate-limited the request even after retries — try again shortly".to_string()
+        } else {
+            concise_aws_error(&e)
+        }
+    })?;
+    let Some(c) = out.role_credentials() else {
+        return Err("response missing credentials".into());
+    };
+    Ok(CachedRoleCreds::from_sdk(org_name, account_id, role_name, region, c))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -206,6 +255,73 @@ fn resolve_target(account: &Account, env: Env, mode: Mode, default_region: &str)
     ))
 }
 
+/// Default rotation margin: engaged profiles whose static keys are within
+/// this of expiry get fresh ones (shared by the background tick and the
+/// connection test's pre-probe self-heal).
+pub const ROTATE_MARGIN_MS: i64 = 15 * 60_000;
+
+/// Rotates static credentials for every listed engaged profile whose
+/// cached creds are within `margin_ms` of expiry — the moral equivalent
+/// of Leapp's credential rotation. The org-token check is memoized per
+/// org (a dead session skips all of that org's profiles at the cost of
+/// one check), and every fresh key lands in `~/.aws/credentials` via ONE
+/// atomic write. Returns how many profiles rotated.
+pub async fn rotate_stale_profiles(
+    orgs: &[OrgConfig],
+    entries: &[(String, EngagedProfile)],
+    margin_ms: i64,
+) -> usize {
+    use std::collections::HashMap;
+    let mut org_tokens: HashMap<String, Option<String>> = HashMap::new();
+    let mut writes: Vec<ProfileKeys> = Vec::new();
+    let mut rotated = 0usize;
+
+    for (alias, entry) in entries {
+        if creds_cache::fresh_within(alias, margin_ms) {
+            continue;
+        }
+        let Some(org) = orgs.iter().find(|o| o.name == entry.org) else { continue };
+        let token = match org_tokens.get(&entry.org) {
+            Some(t) => t.clone(),
+            None => {
+                let t = crate::aws::sso_oidc::ensure_fresh_token(org).await.map(|c| c.access_token);
+                org_tokens.insert(entry.org.clone(), t.clone());
+                t
+            }
+        };
+        let Some(token) = token else {
+            continue; // session dead — the rail's lamp already says so
+        };
+        let client = sso_client(&org.region);
+        match fetch_role_creds(&client, &token, &org.name, &entry.account_id, &entry.role_name, &entry.region).await {
+            Ok(creds) => {
+                if let Err(e) = creds_cache::write(alias, &creds) {
+                    applog::warn(format!("{alias}: creds cache write failed"), &json!({"alias": alias, "error": e.to_string()}));
+                    continue;
+                }
+                writes.push(static_cred_writes(alias, &creds));
+                rotated += 1;
+            }
+            Err(e) => applog::warn(
+                format!("{alias}: background credential rotation failed"),
+                &json!({"alias": alias, "error": e}),
+            ),
+        }
+    }
+
+    if !writes.is_empty() {
+        if let Err(e) = aws_config_editor::upsert_profiles(AwsFile::Credentials, &writes) {
+            applog::error("rotation: credentials write failed", &json!({"error": e.to_string()}));
+            return 0;
+        }
+        applog::info(
+            format!("rotated static credentials for {rotated} profile(s)"),
+            &json!({"count": rotated}),
+        );
+    }
+    rotated
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,9 +412,6 @@ pub async fn engage(
 
     let access_token = valid_access_token(&org.name)?;
     let client = sso_client(&org.region);
-    let exe = std::env::current_exe()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "sleipnir".to_string());
 
     // Resolve everything up front; unresolvable rows fail immediately with
     // a per-row explanation and never hit the network.
@@ -328,44 +441,12 @@ pub async fn engage(
             let on_progress = &on_progress;
             async move {
                 on_progress(&target.alias, "assuming", None);
-                let result = send_retrying(format!("GetRoleCredentials({})", target.alias), || {
-                    client
-                        .get_role_credentials()
-                        .access_token(access_token)
-                        .account_id(&target.account_id)
-                        .role_name(&target.role_name)
-                        .send()
-                })
-                .await;
-
-                match result {
-                    Ok(out) => {
-                        let Some(c) = out.role_credentials() else {
-                            let msg = "response missing credentials".to_string();
-                            on_progress(&target.alias, "failed", Some(&msg));
-                            return Err(FailedRow { alias: target.alias.clone(), message: msg });
-                        };
-                        let creds = CachedRoleCreds {
-                            org: org_name.to_string(),
-                            account_id: target.account_id.clone(),
-                            role_name: target.role_name.clone(),
-                            region: target.region.clone(),
-                            access_key_id: c.access_key_id().unwrap_or_default().to_string(),
-                            secret_access_key: c.secret_access_key().unwrap_or_default().to_string(),
-                            session_token: c.session_token().unwrap_or_default().to_string(),
-                            expiration_unix_ms: c.expiration(),
-                        };
-                        Ok((target, creds))
-                    }
-                    Err(e) => {
-                        let msg = if is_retryable(&e) {
-                            "AWS rate-limited the request even after retries — try again shortly".to_string()
-                        } else {
-                            concise_aws_error(&e)
-                        };
+                match fetch_role_creds(client, access_token, org_name, &target.account_id, &target.role_name, &target.region).await {
+                    Ok(creds) => Ok((target, creds)),
+                    Err(msg) => {
                         applog::error(
                             format!("{}: GetRoleCredentials failed", target.alias),
-                            &json!({"alias": target.alias, "accountId": target.account_id, "roleName": target.role_name, "awsError": format!("{e:?}")}),
+                            &json!({"alias": target.alias, "accountId": target.account_id, "roleName": target.role_name, "error": msg}),
                         );
                         on_progress(&target.alias, "failed", Some(&msg));
                         Err(FailedRow { alias: target.alias.clone(), message: msg })
@@ -378,7 +459,8 @@ pub async fn engage(
         .await;
 
     let mut succeeded: Vec<EngagedRow> = Vec::new();
-    let mut profile_writes: Vec<ProfileKeys> = Vec::new();
+    let mut config_writes: Vec<ProfileKeys> = Vec::new();
+    let mut credential_writes: Vec<ProfileKeys> = Vec::new();
     let now = state::now_unix_ms();
 
     for fetch in fetches {
@@ -391,13 +473,17 @@ pub async fn engage(
                     failed.push(FailedRow { alias: target.alias.clone(), message: msg });
                     continue;
                 }
-                profile_writes.push(ProfileKeys {
+                // Static-key delivery: the keys land in ~/.aws/credentials
+                // so ANY consumer works — including sandboxed apps that
+                // cannot exec a credential_process helper. The config
+                // stanza carries region and gets competing credential
+                // sources (incl. retired credential_process lines)
+                // commented out, since several outrank static keys.
+                config_writes.push(ProfileKeys {
                     profile: target.alias.clone(),
-                    keys: vec![
-                        ("credential_process".to_string(), format!("\"{exe}\" creds --profile {}", target.alias)),
-                        ("region".to_string(), target.region.clone()),
-                    ],
+                    keys: vec![("region".to_string(), target.region.clone())],
                 });
+                credential_writes.push(static_cred_writes(&target.alias, &creds));
                 app_state.engaged.insert(
                     target.alias.clone(),
                     EngagedProfile {
@@ -430,14 +516,16 @@ pub async fn engage(
         }
     }
 
-    // One atomic ~/.aws/config write for everything that succeeded — vpb
-    // lines and unmanaged stanzas preserved byte-for-byte by the editor.
-    if !profile_writes.is_empty() {
-        if let Err(e) = aws_config_editor::upsert_profiles(&aws_config_editor::default_path(), &profile_writes) {
-            // The creds are fetched but profiles unwritten — fail everything
+    // One atomic write per file for everything that succeeded — vpb lines
+    // and unmanaged stanzas preserved byte-for-byte by the editor.
+    if !succeeded.is_empty() {
+        let result = aws_config_editor::upsert_profiles(AwsFile::Config, &config_writes)
+            .and_then(|_| aws_config_editor::upsert_profiles(AwsFile::Credentials, &credential_writes));
+        if let Err(e) = result {
+            // The creds are fetched but files unwritten — fail everything
             // loudly rather than pretend the terminals will work.
-            let msg = format!("writing ~/.aws/config failed: {e}");
-            applog::error("engage: aws config write failed", &json!({"error": e.to_string()}));
+            let msg = format!("writing AWS config/credentials failed: {e}");
+            applog::error("engage: aws file write failed", &json!({"error": e.to_string()}));
             for row in &succeeded {
                 on_progress(&row.alias, "failed", Some(&msg));
                 failed.push(FailedRow { alias: row.alias.clone(), message: msg.clone() });

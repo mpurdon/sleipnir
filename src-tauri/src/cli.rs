@@ -3,6 +3,11 @@
 //! to stdout and nothing else on success; on any failure it prints a
 //! human-actionable message to stderr and exits non-zero.
 //!
+//! LEGACY, kept deliberately: engage now delivers static keys into
+//! `~/.aws/credentials` (sandboxed consumers can't exec a helper), so
+//! sleipnir no longer writes `credential_process` lines — but this
+//! resolver still works for anyone who wires it up by hand.
+//!
 //! The `engaged` map in `~/.sleipnir/state.json` is the authority: a
 //! profile that isn't currently engaged refuses to resolve even though its
 //! `~/.aws/config` stanza remains — DISENGAGE in the app is a real
@@ -69,9 +74,8 @@ fn resolve(profile: &str) -> Result<String, String> {
         ));
     };
 
-    let now_ms = state::now_unix_ms() as i64;
-    if let Some(cached) = creds_cache::read(profile) {
-        if cached.expiration_unix_ms > now_ms + REFRESH_MARGIN_MS {
+    if creds_cache::fresh_within(profile, REFRESH_MARGIN_MS) {
+        if let Some(cached) = creds_cache::read(profile) {
             return Ok(render(&cached));
         }
     }

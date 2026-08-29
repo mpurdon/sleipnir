@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { AppState, EngagedProfile, Org } from "../lib/types";
 import { testProfile, type LoginProgress, type ProfileTest } from "../lib/tauri";
-import { ENV_LABELS, MODES } from "../lib/constants";
+import { ENV_LABELS, isSessionAlive, MODES, sessionMsLeft } from "../lib/constants";
 import { formatError } from "../lib/errors";
 import { closeWindow, minimizeWindow } from "../lib/drawerWindow";
 import { SectionRule, Slab } from "../theme";
@@ -11,17 +12,17 @@ import closeIcon from "../assets/close.png";
 
 function lampColor(org: Org, loggingIn: boolean): string {
   if (loggingIn) return "var(--c-yellow)";
-  if (!org.tokenExpiresAt) return "var(--c-magenta)";
-  const msLeft = new Date(org.tokenExpiresAt).getTime() - Date.now();
+  const msLeft = sessionMsLeft(org);
   if (msLeft <= 0) return "var(--c-magenta)";
   if (msLeft < 30 * 60_000) return "var(--c-yellow)";
   return "var(--c-lime)";
 }
 
 function lampLabel(org: Org): string {
-  if (!org.tokenExpiresAt) return "NOT LOGGED IN";
-  const msLeft = new Date(org.tokenExpiresAt).getTime() - Date.now();
-  if (msLeft <= 0) return "EXPIRED";
+  // A dead session's label is a call to action — clicking the row starts
+  // the login directly, no drawer detour.
+  const msLeft = sessionMsLeft(org);
+  if (msLeft <= 0) return "LOG IN ▸";
   const hrs = Math.floor(msLeft / 3_600_000);
   const mins = Math.floor((msLeft % 3_600_000) / 60_000);
   return hrs > 0 ? `${hrs}H ${mins}M` : `${mins}M`;
@@ -54,7 +55,10 @@ function TestModal({
   const failed = typeof result === "object" && ("error" in result || !result.ok);
   const test = typeof result === "object" && "ok" in result ? result : null;
   const color = running ? "var(--c-cyan)" : failed ? "var(--c-magenta)" : "var(--c-lime)";
-  return (
+  // Portal to <body>: the rail and drawer each form stacking contexts (and
+  // the rail clips overflow for the frozen header), so an in-tree overlay
+  // gets buried/clipped when a drawer is open.
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <Slab tint={color} cut={6} className="test-modal" style={{ minWidth: 300 }}>
         <div onClick={(e) => e.stopPropagation()} className="test-modal-inner">
@@ -100,7 +104,8 @@ function TestModal({
           )}
         </div>
       </Slab>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -278,6 +283,7 @@ export function Rail({
         </div>
       </header>
 
+      <div className="rail-scroll">
       <SectionRule title="Orgs" />
       <div className="org-list">
         {orgs.map((org) => {
@@ -289,7 +295,7 @@ export function Rail({
               <button
                 className="org-row-main hover-glow"
                 onClick={() => onSelectOrg(org.name)}
-                title={`Use ${org.name} for projects & services`}
+                title={isSessionAlive(org) ? `Use ${org.name} for projects & services` : `Log in to ${org.name}`}
               >
                 <span
                   className={`org-lamp${loggingIn ? " org-lamp-pulse" : ""}`}
@@ -391,6 +397,7 @@ export function Rail({
         <button className="settings-btn hover-glow" onClick={onOpenSettings}>
           ⚙ SETTINGS
         </button>
+      </div>
       </div>
     </aside>
   );

@@ -36,6 +36,15 @@ pub fn run() {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.set_background_color(Some(tauri::window::Color(9, 11, 14, 255)));
             }
+            // The backend owns the credential-rotation schedule (static
+            // ~/.aws/credentials keys go stale hourly); the frontend only
+            // triggers extra passes on user-visible events.
+            tauri::async_runtime::spawn(async {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(240)).await;
+                    let _ = commands::refresh_engaged_credentials().await;
+                }
+            });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -71,6 +80,7 @@ pub fn run() {
             commands::engage,
             commands::disengage,
             commands::disengage_all,
+            commands::refresh_engaged_credentials,
             commands::app_paths,
             commands::open_in_file_manager,
             commands::read_logs,

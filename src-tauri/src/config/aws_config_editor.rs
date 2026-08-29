@@ -1,11 +1,14 @@
-//! Line-preserving `~/.aws/config` editor.
+//! Line-preserving editor for `~/.aws/config` AND `~/.aws/credentials`.
 //!
-//! Hard requirement: this machine's `~/.aws/config` is co-managed by the
+//! Hard requirement: this machine's AWS files are co-managed by the
 //! user's `vpb` tool (`# vpb — managed` markers, `ca_bundle` lines) and by
-//! hand edits. sleipnir therefore NEVER rewrites the file wholesale — it
-//! edits individual key lines inside its target `[profile X]` stanzas and
-//! leaves every other byte exactly as found (comments, blank lines,
-//! unknown keys, other stanzas). Writes are atomic (temp + rename).
+//! hand edits. sleipnir therefore NEVER rewrites a file wholesale — it
+//! edits individual key lines inside its target stanzas and leaves every
+//! other byte exactly as found (comments, blank lines, unknown keys, other
+//! stanzas). Writes are atomic (temp + rename).
+//!
+//! The two files differ only in section-header style: `[profile x]` in
+//! config, bare `[x]` in credentials — expressed as `HeaderStyle`.
 //!
 //! No inline `# sleipnir` tags on key lines: the AWS CLI does not strip
 //! trailing comments, so a tag would corrupt the value. Stanzas sleipnir
@@ -14,12 +17,44 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub fn default_path() -> PathBuf {
-    dirs::home_dir().expect("home directory").join(".aws").join("config")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeaderStyle {
+    /// `[profile name]` — ~/.aws/config
+    ConfigProfile,
+    /// `[name]` — ~/.aws/credentials
+    Credentials,
+}
+
+/// The two AWS files sleipnir edits, each fused with its header style so
+/// a caller can never pair the credentials path with `[profile x]`
+/// headers (or vice versa) — that mismatch is unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AwsFile {
+    Config,
+    Credentials,
+}
+
+impl AwsFile {
+    pub fn path(self) -> PathBuf {
+        let aws = dirs::home_dir().expect("home directory").join(".aws");
+        match self {
+            AwsFile::Config => aws.join("config"),
+            AwsFile::Credentials => aws.join("credentials"),
+        }
+    }
+
+    fn style(self) -> HeaderStyle {
+        match self {
+            AwsFile::Config => HeaderStyle::ConfigProfile,
+            AwsFile::Credentials => HeaderStyle::Credentials,
+        }
+    }
 }
 
 /// One profile stanza's sleipnir-owned keys. Any other keys already in the
 /// stanza (vpb's `ca_bundle`, hand-added settings) are preserved untouched.
+/// Config-file writes are always takeovers: competing credential-source
+/// keys in the stanza get commented out so sleipnir's delivery wins.
 #[derive(Debug, Clone)]
 pub struct ProfileKeys {
     pub profile: String,
@@ -31,12 +66,15 @@ fn is_section_header(line: &str) -> bool {
     t.starts_with('[') && t.ends_with(']')
 }
 
-fn header_for(profile: &str) -> String {
-    format!("[profile {profile}]")
+fn header_for(style: HeaderStyle, profile: &str) -> String {
+    match style {
+        HeaderStyle::ConfigProfile => format!("[profile {profile}]"),
+        HeaderStyle::Credentials => format!("[{profile}]"),
+    }
 }
 
-fn section_matches(line: &str, profile: &str) -> bool {
-    line.trim() == header_for(profile)
+fn section_matches(style: HeaderStyle, line: &str, profile: &str) -> bool {
+    line.trim() == header_for(style, profile)
 }
 
 /// True when the line sets `key` (ignoring leading whitespace, not a
@@ -52,42 +90,51 @@ fn line_sets_key(line: &str, key: &str) -> bool {
     }
 }
 
-/// Upserts every given profile's keys in one atomic write. Creates missing
-/// stanzas at EOF; within existing stanzas replaces only the named keys in
-/// place (or appends them at the stanza's end), preserving everything else
-/// byte-for-byte.
-pub fn upsert_profiles(path: &Path, profiles: &[ProfileKeys]) -> io::Result<()> {
+fn read_lines(path: &Path) -> io::Result<(Vec<String>, bool)> {
     let original = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e),
     };
     let had_trailing_newline = original.is_empty() || original.ends_with('\n');
-    let mut lines: Vec<String> = original.lines().map(str::to_string).collect();
+    Ok((original.lines().map(str::to_string).collect(), had_trailing_newline))
+}
 
-    for spec in profiles {
-        upsert_one(&mut lines, spec);
-    }
-
+fn write_lines(path: &Path, lines: Vec<String>, had_trailing_newline: bool) -> io::Result<()> {
     let mut out = lines.join("\n");
     if had_trailing_newline && !out.is_empty() {
         out.push('\n');
     }
-
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("sleipnir-tmp");
     std::fs::write(&tmp, out)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
     std::fs::rename(&tmp, path)
 }
 
-/// Credential-source keys that OUTRANK `credential_process` in the AWS
-/// CLI's resolution chain (SSO config, assume-role, static keys). Left in
-/// place they silently override sleipnir's engagement — the stanza would
-/// say READONLY in the rail while terminals resolve something else
-/// entirely. Engage comments them out (reversibly, with a marker) rather
-/// than deleting.
+/// Finds a stanza's [start, end) line range, end exclusive.
+fn find_section(lines: &[String], style: HeaderStyle, profile: &str) -> Option<(usize, usize)> {
+    let start = lines.iter().position(|l| section_matches(style, l, profile))?;
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| is_section_header(l))
+        .map(|off| start + 1 + off)
+        .unwrap_or(lines.len());
+    Some((start, end))
+}
+
+/// Credential-source keys ranked ABOVE static credentials-file keys (or
+/// each other) in the AWS CLI's resolution chain — SSO config, assume-role,
+/// in-stanza statics, and sleipnir's own retired credential_process lines.
+/// Left in place they silently override sleipnir's engagement: the rail
+/// would say READONLY while terminals resolve something else entirely.
+/// Takeover writes comment them out (reversibly, with a marker).
 const CONFLICTING_KEYS: &[&str] = &[
     "sso_start_url",
     "sso_region",
@@ -97,6 +144,7 @@ const CONFLICTING_KEYS: &[&str] = &[
     "role_arn",
     "source_profile",
     "credential_source",
+    "credential_process",
     "aws_access_key_id",
     "aws_secret_access_key",
     "aws_session_token",
@@ -105,17 +153,29 @@ const CONFLICTING_KEYS: &[&str] = &[
 
 const DISABLED_MARKER: &str = "# sleipnir-disabled: ";
 
-fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
-    // Locate the stanza: [start, end) where end is the next section header
-    // or EOF.
-    let start = lines.iter().position(|l| section_matches(l, &spec.profile));
+/// Upserts every given profile's keys in one atomic write. Creates missing
+/// stanzas at EOF; within existing stanzas replaces only the named keys in
+/// place (or appends them at the stanza's end), preserving everything else
+/// byte-for-byte.
+pub fn upsert_profiles(file: AwsFile, profiles: &[ProfileKeys]) -> io::Result<()> {
+    upsert_profiles_at(&file.path(), file.style(), profiles)
+}
 
-    let Some(start) = start else {
+fn upsert_profiles_at(path: &Path, style: HeaderStyle, profiles: &[ProfileKeys]) -> io::Result<()> {
+    let (mut lines, had_trailing_newline) = read_lines(path)?;
+    for spec in profiles {
+        upsert_one(&mut lines, style, spec);
+    }
+    write_lines(path, lines, had_trailing_newline)
+}
+
+fn upsert_one(lines: &mut Vec<String>, style: HeaderStyle, spec: &ProfileKeys) {
+    let Some((start, end)) = find_section(lines, style, &spec.profile) else {
         // New stanza at EOF, separated by a blank line.
         if !lines.is_empty() && !lines.last().unwrap().trim().is_empty() {
             lines.push(String::new());
         }
-        lines.push(header_for(&spec.profile));
+        lines.push(header_for(style, &spec.profile));
         lines.push("# managed by sleipnir".to_string());
         for (k, v) in &spec.keys {
             lines.push(format!("{k} = {v}"));
@@ -123,18 +183,15 @@ fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
         return;
     };
 
-    let end = lines[start + 1..]
-        .iter()
-        .position(|l| is_section_header(l))
-        .map(|off| start + 1 + off)
-        .unwrap_or(lines.len());
-
     // Neutralize higher-precedence credential sources already in the
-    // stanza so credential_process actually takes effect.
-    let writes_credential_process = spec.keys.iter().any(|(k, _)| k == "credential_process");
-    if writes_credential_process {
+    // stanza (config file only) — but never a key we're about to (re)write
+    // ourselves.
+    if style == HeaderStyle::ConfigProfile {
         for line in &mut lines[start + 1..end] {
-            if CONFLICTING_KEYS.iter().any(|k| line_sets_key(line, k)) {
+            let conflicted = CONFLICTING_KEYS
+                .iter()
+                .any(|k| line_sets_key(line, k) && !spec.keys.iter().any(|(wk, _)| wk == k));
+            if conflicted {
                 *line = format!("{DISABLED_MARKER}{line}");
             }
         }
@@ -156,48 +213,59 @@ fn upsert_one(lines: &mut Vec<String>, spec: &ProfileKeys) {
     }
 }
 
-/// Renames a `[profile old]` stanza in place — header line plus any
-/// `credential_process` value referencing `--profile old` — leaving every
-/// other byte untouched. A missing stanza is a no-op.
-pub fn rename_profile(path: &Path, old: &str, new: &str) -> io::Result<()> {
-    let original = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
-    };
-    let had_trailing_newline = original.is_empty() || original.ends_with('\n');
-    let mut lines: Vec<String> = original.lines().map(str::to_string).collect();
+/// Deletes the given key lines from each named profile's stanza in ONE
+/// read+write (disengage removing static credentials for a whole project).
+/// Missing file/stanzas/keys are no-ops.
+pub fn remove_profiles_keys(file: AwsFile, profiles: &[&str], keys: &[&str]) -> io::Result<()> {
+    remove_profiles_keys_at(&file.path(), file.style(), profiles, keys)
+}
 
-    let Some(start) = lines.iter().position(|l| section_matches(l, old)) else {
+fn remove_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str], keys: &[&str]) -> io::Result<()> {
+    let (mut lines, had_trailing_newline) = read_lines(path)?;
+    for profile in profiles {
+        let Some((start, end)) = find_section(&lines, style, profile) else {
+            continue;
+        };
+        let mut i = start + 1;
+        let mut end = end;
+        while i < end {
+            if keys.iter().any(|k| line_sets_key(&lines[i], k)) {
+                lines.remove(i);
+                end -= 1;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    write_lines(path, lines, had_trailing_newline)
+}
+
+/// Renames a stanza in place — header line plus any `credential_process`
+/// value referencing `--profile old` — leaving every other byte untouched.
+/// A missing stanza is a no-op.
+pub fn rename_profile(file: AwsFile, old: &str, new: &str) -> io::Result<()> {
+    rename_profile_at(&file.path(), file.style(), old, new)
+}
+
+fn rename_profile_at(path: &Path, style: HeaderStyle, old: &str, new: &str) -> io::Result<()> {
+    let (mut lines, had_trailing_newline) = read_lines(path)?;
+    let Some((start, end)) = find_section(&lines, style, old) else {
         return Ok(());
     };
-    let end = lines[start + 1..]
-        .iter()
-        .position(|l| is_section_header(l))
-        .map(|off| start + 1 + off)
-        .unwrap_or(lines.len());
-
-    lines[start] = header_for(new);
+    lines[start] = header_for(style, new);
     for line in &mut lines[start + 1..end] {
         if line_sets_key(line, "credential_process") {
             *line = line.replace(&format!("--profile {old}"), &format!("--profile {new}"));
         }
     }
-
-    let mut out = lines.join("\n");
-    if had_trailing_newline && !out.is_empty() {
-        out.push('\n');
-    }
-    let tmp = path.with_extension("sleipnir-tmp");
-    std::fs::write(&tmp, out)?;
-    std::fs::rename(&tmp, path)
+    write_lines(path, lines, had_trailing_newline)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn run(initial: &str, profiles: &[ProfileKeys]) -> String {
+    fn run_with(style: HeaderStyle, initial: &str, profiles: &[ProfileKeys]) -> String {
         let dir = std::env::temp_dir().join(format!("sleipnir-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("cfg-{:p}", initial.as_ptr()));
@@ -206,10 +274,14 @@ mod tests {
         } else {
             let _ = std::fs::remove_file(&path);
         }
-        upsert_profiles(&path, profiles).unwrap();
+        upsert_profiles_at(&path, style, profiles).unwrap();
         let out = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         out
+    }
+
+    fn run(initial: &str, profiles: &[ProfileKeys]) -> String {
+        run_with(HeaderStyle::ConfigProfile, initial, profiles)
     }
 
     fn keys(profile: &str, kv: &[(&str, &str)]) -> ProfileKeys {
@@ -221,11 +293,47 @@ mod tests {
 
     #[test]
     fn creates_stanza_in_empty_file() {
-        let out = run("", &[keys("svc", &[("region", "us-east-2"), ("credential_process", "\"/x/sleipnir\" creds --profile svc")])]);
-        assert_eq!(
-            out,
-            "[profile svc]\n# managed by sleipnir\nregion = us-east-2\ncredential_process = \"/x/sleipnir\" creds --profile svc\n"
+        let out = run("", &[keys("svc", &[("region", "us-east-2")])]);
+        assert_eq!(out, "[profile svc]\n# managed by sleipnir\nregion = us-east-2\n");
+    }
+
+    #[test]
+    fn credentials_style_uses_bare_headers() {
+        let out = run_with(
+            HeaderStyle::Credentials,
+            "[nieto]\naws_access_key_id = AKIAOLD\n",
+            &[keys("svc", &[("aws_access_key_id", "ASIANEW"), ("aws_secret_access_key", "s"), ("aws_session_token", "t")])],
         );
+        // Other people's stanzas untouched; ours appended bare-header style.
+        assert!(out.starts_with("[nieto]\naws_access_key_id = AKIAOLD\n"));
+        assert!(out.contains("\n[svc]\n# managed by sleipnir\naws_access_key_id = ASIANEW\naws_secret_access_key = s\naws_session_token = t\n"));
+    }
+
+    #[test]
+    fn credentials_upsert_replaces_in_place() {
+        let initial = "[svc]\n# managed by sleipnir\naws_access_key_id = OLD\naws_secret_access_key = OLDS\naws_session_token = OLDT\n";
+        let out = run_with(
+            HeaderStyle::Credentials,
+            initial,
+            &[keys("svc", &[("aws_access_key_id", "NEW"), ("aws_secret_access_key", "NEWS"), ("aws_session_token", "NEWT")])],
+        );
+        assert_eq!(out, "[svc]\n# managed by sleipnir\naws_access_key_id = NEW\naws_secret_access_key = NEWS\naws_session_token = NEWT\n");
+    }
+
+    #[test]
+    fn remove_keys_deletes_only_named_lines() {
+        let dir = std::env::temp_dir().join(format!("sleipnir-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cfg-remove");
+        std::fs::write(
+            &path,
+            "[svc]\n# managed by sleipnir\naws_access_key_id = A\naws_secret_access_key = B\naws_session_token = C\n\n[other]\naws_access_key_id = KEEP\n",
+        )
+        .unwrap();
+        remove_profiles_keys_at(&path, HeaderStyle::Credentials, &["svc"], &["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]).unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(out, "[svc]\n# managed by sleipnir\n\n[other]\naws_access_key_id = KEEP\n");
     }
 
     #[test]
@@ -240,20 +348,18 @@ region = us-east-1
 ca_bundle = /etc/vpb/ca.pem
 region = us-west-2
 ";
-        let out = run(initial, &[keys("svc", &[("region", "us-east-2"), ("credential_process", "X")])]);
-        // vpb's comment, the other stanza, and svc's ca_bundle survive
-        // byte-for-byte; only svc's region changed + credential_process added.
+        let out = run(initial, &[keys("svc", &[("region", "us-east-2")])]);
         assert!(out.contains("# vpb — managed\n[profile other]\nca_bundle = /etc/vpb/ca.pem\nregion = us-east-1\n"));
-        assert!(out.contains("[profile svc]\nca_bundle = /etc/vpb/ca.pem\nregion = us-east-2\ncredential_process = X\n"));
+        assert!(out.contains("[profile svc]\nca_bundle = /etc/vpb/ca.pem\nregion = us-east-2\n"));
     }
 
     #[test]
     fn inserts_before_trailing_blank_line_of_stanza() {
         let initial = "[profile svc]\nregion = us-west-2\n\n[profile tail]\nregion = eu-west-1\n";
-        let out = run(initial, &[keys("svc", &[("credential_process", "X")])]);
+        let out = run(initial, &[keys("svc", &[("output", "json")])]);
         assert_eq!(
             out,
-            "[profile svc]\nregion = us-west-2\ncredential_process = X\n\n[profile tail]\nregion = eu-west-1\n"
+            "[profile svc]\nregion = us-west-2\noutput = json\n\n[profile tail]\nregion = eu-west-1\n"
         );
     }
 
@@ -265,6 +371,59 @@ region = us-west-2
             out,
             "[sso-session acme]\nsso_start_url = https://x/start\n\n[profile svc]\n# managed by sleipnir\nregion = us-east-2\n"
         );
+    }
+
+    /// A pre-existing profile with SSO config (and a retired sleipnir
+    /// credential_process line): those keys outrank static credentials in
+    /// the CLI chain, so takeover must comment them out or the engagement
+    /// is cosmetic.
+    #[test]
+    fn takeover_disables_conflicting_credential_sources() {
+        let initial = "\
+[profile gitf]
+ca_bundle = /Users/mp/.vpb/ca-bundle.pem
+# GhostInTheFactory-Production via IAM Identity Center
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 515020252848
+sso_role_name = AccountAdmin
+credential_process = \"/old/sleipnir\" creds --profile gitf
+region = us-east-1
+";
+        let out = run(initial, &[keys("gitf", &[("region", "us-east-1")])]);
+        assert!(out.contains("# sleipnir-disabled: sso_start_url = https://example.awsapps.com/start\n"));
+        assert!(out.contains("# sleipnir-disabled: sso_role_name = AccountAdmin\n"));
+        assert!(out.contains("# sleipnir-disabled: credential_process = \"/old/sleipnir\" creds --profile gitf\n"));
+        // Non-credential keys and comments untouched.
+        assert!(out.contains("\nca_bundle = /Users/mp/.vpb/ca-bundle.pem\n"));
+        assert!(out.contains("\n# GhostInTheFactory-Production via IAM Identity Center\n"));
+        assert!(out.contains("\nregion = us-east-1\n"));
+    }
+
+    #[test]
+    fn rename_moves_header_and_credential_process_only() {
+        let dir = std::env::temp_dir().join(format!("sleipnir-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cfg-rename");
+        std::fs::write(
+            &path,
+            "[profile ghostinthefactory]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile ghostinthefactory\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n",
+        )
+        .unwrap();
+        rename_profile_at(&path, HeaderStyle::ConfigProfile, "ghostinthefactory", "gitf").unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            out,
+            "[profile gitf]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile gitf\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n"
+        );
+    }
+
+    #[test]
+    fn does_not_match_key_in_comment_or_other_stanza() {
+        let initial = "[profile svc]\n# region = commented\noutput = json\n";
+        let out = run(initial, &[keys("svc", &[("region", "us-east-2")])]);
+        assert_eq!(out, "[profile svc]\n# region = commented\noutput = json\nregion = us-east-2\n");
     }
 
     /// Modeled byte-for-byte on this machine's real vpb-managed file:
@@ -290,63 +449,8 @@ ca_bundle = /Users/mp/.vpb/ca-bundle.pem
 source_profile=nieto
 region=us-east-1
 ";
-        let out = run(initial, &[keys("core-services", &[("credential_process", "\"/x/sleipnir\" creds --profile core-services"), ("region", "us-east-2")])]);
-        // Original content is a byte-identical prefix; new stanza appended.
+        let out = run(initial, &[keys("core-services", &[("region", "us-east-2")])]);
         assert!(out.starts_with(initial), "existing content must be untouched");
-        assert!(out.ends_with(
-            "\n[profile core-services]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile core-services\nregion = us-east-2\n"
-        ));
-    }
-
-    /// A pre-existing profile with SSO config: those keys outrank
-    /// credential_process in the CLI chain, so engage must comment them
-    /// out or the engagement is cosmetic (rail says READONLY, terminal
-    /// gets whatever the old SSO config grants).
-    #[test]
-    fn engage_disables_conflicting_credential_sources() {
-        let initial = "\
-[profile gitf]
-ca_bundle = /Users/mp/.vpb/ca-bundle.pem
-# GhostInTheFactory-Production via IAM Identity Center
-sso_start_url = https://example.awsapps.com/start
-sso_region = us-east-1
-sso_account_id = 515020252848
-sso_role_name = AccountAdmin
-region = us-east-1
-";
-        let out = run(initial, &[keys("gitf", &[("credential_process", "X creds --profile gitf"), ("region", "us-east-1")])]);
-        assert!(out.contains("# sleipnir-disabled: sso_start_url = https://example.awsapps.com/start\n"));
-        assert!(out.contains("# sleipnir-disabled: sso_role_name = AccountAdmin\n"));
-        // Non-credential keys and comments untouched.
-        assert!(out.contains("\nca_bundle = /Users/mp/.vpb/ca-bundle.pem\n"));
-        assert!(out.contains("\n# GhostInTheFactory-Production via IAM Identity Center\n"));
-        assert!(out.contains("\nregion = us-east-1\n"));
-        assert!(out.contains("\ncredential_process = X creds --profile gitf\n"));
-    }
-
-    #[test]
-    fn rename_moves_header_and_credential_process_only() {
-        let dir = std::env::temp_dir().join(format!("sleipnir-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("cfg-rename");
-        std::fs::write(
-            &path,
-            "[profile ghostinthefactory]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile ghostinthefactory\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n",
-        )
-        .unwrap();
-        rename_profile(&path, "ghostinthefactory", "gitf").unwrap();
-        let out = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-        assert_eq!(
-            out,
-            "[profile gitf]\n# managed by sleipnir\ncredential_process = \"/x/sleipnir\" creds --profile gitf\nregion = us-east-2\n\n[profile other]\nregion = eu-west-1\n"
-        );
-    }
-
-    #[test]
-    fn does_not_match_key_in_comment_or_other_stanza() {
-        let initial = "[profile svc]\n# region = commented\noutput = json\n";
-        let out = run(initial, &[keys("svc", &[("region", "us-east-2")])]);
-        assert_eq!(out, "[profile svc]\n# region = commented\noutput = json\nregion = us-east-2\n");
+        assert!(out.ends_with("\n[profile core-services]\n# managed by sleipnir\nregion = us-east-2\n"));
     }
 }
