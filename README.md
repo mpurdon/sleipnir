@@ -45,11 +45,11 @@ xattr -dr com.apple.quarantine /Applications/sleipnir.app
   the hourly access token rotates silently, and engaged profiles' keys are
   refreshed in the background before they expire; the only login you ever
   see is your org's real SSO session boundary.
-- **Safety by construction** — DISENGAGE is a real off-switch (a
-  disengaged profile refuses to resolve even though its config stanza
-  remains); admin-on-production requires a press-and-hold, never a
-  dismissable dialog; mode fallback (admin → poweruser → readonly) never
-  escalates and the UI always shows the access you actually got.
+- **Safety by construction** — DISENGAGE is a real off-switch (the keys
+  are physically removed from `~/.aws/credentials`); admin-on-production
+  requires a press-and-hold, never a dismissable dialog; mode fallback
+  (admin → poweruser → readonly) never escalates and the UI always shows
+  the access you actually got.
 - **Plays well with others** — the `~/.aws/config` editor is
   line-preserving and byte-faithful around stanzas it doesn't own, and it
   neutralizes (reversibly comments out) credential keys that would
