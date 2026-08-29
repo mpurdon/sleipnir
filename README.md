@@ -10,6 +10,10 @@
   that wires itself up from your org's naming conventions.
 </p>
 
+<p align="center">
+  <img src="docs/screenshot-services.png" alt="Services drawer with a service expanded: profile editor, env/mode selection, and the press-and-hold engage button" width="820" />
+</p>
+
 ---
 
 ## Install
@@ -33,13 +37,14 @@ xattr -dr com.apple.quarantine /Applications/sleipnir.app
   service, four environments), with per-environment role picks in a review
   table before anything is imported.
 - **Projects** — bundle the services you work on together and engage them
-  as a unit: one click fetches role credentials for every member and wires
-  `~/.aws/config` profiles via `credential_process`. Your terminals just
-  work: `aws sts get-caller-identity --profile core-services`.
-- **Honest sessions** — the SSO refresh token lives in the macOS Keychain
-  and the hourly access token rotates silently in the background; the only
-  login you ever see is your org's real SSO session boundary. Terminals
-  self-heal headlessly through the bundled `sleipnir creds` resolver.
+  as a unit: one click fetches role credentials for every member and
+  delivers them as profiles in `~/.aws/credentials` — so terminals, SDKs,
+  IDE plugins, and even sandboxed apps just work:
+  `aws sts get-caller-identity --profile core-services`.
+- **Honest sessions** — the SSO refresh token lives in the macOS Keychain,
+  the hourly access token rotates silently, and engaged profiles' keys are
+  refreshed in the background before they expire; the only login you ever
+  see is your org's real SSO session boundary.
 - **Safety by construction** — DISENGAGE is a real off-switch (a
   disengaged profile refuses to resolve even though its config stanza
   remains); admin-on-production requires a press-and-hold, never a
@@ -48,10 +53,23 @@ xattr -dr com.apple.quarantine /Applications/sleipnir.app
 - **Plays well with others** — the `~/.aws/config` editor is
   line-preserving and byte-faithful around stanzas it doesn't own, and it
   neutralizes (reversibly comments out) credential keys that would
-  silently outrank `credential_process`.
+  silently override an engagement.
 - **⚡ Connection test** — verifies a profile through the *real* path:
-  the AWS CLI reading your config, invoking `credential_process`, hitting
-  STS — with the resulting ARN shown in-app.
+  the AWS CLI reading your config and hitting STS — with the resulting
+  ARN shown in-app.
+
+<table>
+  <tr>
+    <td align="center" width="34%">
+      <img src="docs/screenshot-rail.png" alt="The compact rail: orgs with live session countdowns, projects/services drawers, and engaged profiles grouped by project" />
+      <br/><sub>The rail — orgs, drawers, and everything currently engaged</sub>
+    </td>
+    <td align="center" width="66%">
+      <img src="docs/screenshot-test.png" alt="Connection test modal showing a live CONNECTED result with account, ARN, and latency" />
+      <br/><sub>⚡ Connection test — a real <code>sts get-caller-identity</code> round-trip</sub>
+    </td>
+  </tr>
+</table>
 
 ## Development
 
