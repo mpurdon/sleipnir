@@ -85,9 +85,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.file }}" \
-            --title "sleipnir $GITHUB_REF_NAME" \
-            --generate-notes
+          # Idempotent so a rerun after a late-step failure doesn't die on
+          # "release already exists" before reaching the tap bump.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.file }}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.file }}" \
+              --title "sleipnir $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
 
       - name: Bump Homebrew tap
         env:
