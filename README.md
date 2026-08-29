@@ -22,12 +22,8 @@
 brew install --cask mpurdon/tap/sleipnir-aws
 ```
 
-Apple Silicon only for now. The app isn't notarized yet — if Gatekeeper
-objects on first launch, right-click the app and choose **Open**, or run:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/sleipnir.app
-```
+Apple Silicon only for now. Signed and notarized — no Gatekeeper
+workarounds needed.
 
 ## What it does
 
