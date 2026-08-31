@@ -10,6 +10,9 @@ import { useOrgs } from "./lib/useOrgs";
 import { useConfig } from "./lib/useConfig";
 import { useAppState } from "./lib/useAppState";
 import { chooseSide, DRAWER_ANIM_MS, expandFrame, prepareCollapse, type DrawerSide } from "./lib/drawerWindow";
+import { useTour } from "./tour/useTour";
+import { TourOverlay } from "./tour/TourOverlay";
+import "./tour/tour.css";
 import "./App.css";
 
 type DrawerKind =
@@ -34,6 +37,7 @@ function drawerTitle(d: DrawerKind): string {
 export function App() {
   const {
     orgs,
+    loaded: orgsLoaded,
     login,
     refresh: refreshOrgs,
     refreshOne,
@@ -76,6 +80,9 @@ export function App() {
   const [highlightServices, setHighlightServices] = useState(false);
   /** Drives the drawer's CSS slide: "in" on mount, "out" before unmount. */
   const [drawerAnim, setDrawerAnim] = useState<"in" | "out">("in");
+  /** Which tab Settings opens on — the rail's ? button routes to help. */
+  const [settingsTab, setSettingsTab] = useState<"help" | "orgs">("orgs");
+  const tour = useTour();
 
   // Default to the first Org once the real list loads.
   useEffect(() => {
@@ -134,6 +141,23 @@ export function App() {
     setDrawer(d);
   }
 
+  // A step can require a drawer to be open for its anchor to exist. Keyed
+  // on the required drawer alone: re-running when `drawer` changes would
+  // fight the user if they closed it deliberately mid-tour.
+  const tourDrawer = tour.active?.step.drawer ?? null;
+  useEffect(() => {
+    if (!tourDrawer || drawer?.kind === tourDrawer) return;
+    void openDrawer(tourDrawer === "org" ? { kind: "org", name: activeOrg } : { kind: tourDrawer });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourDrawer]);
+
+  // Offer the first-run tour once, and only to someone with no orgs yet.
+  // Gated on `orgsLoaded` so the empty array this starts with is not read
+  // as "brand new user".
+  useEffect(() => {
+    if (orgsLoaded) tour.offerFirstRun(orgs.length > 0);
+  }, [orgsLoaded, orgs.length, tour.offerFirstRun]);
+
   const orgProjects = activeOrg ? projects.filter((p) => p.org === activeOrg) : [];
   const orgAccounts = activeOrg ? accounts.filter((a) => a.org === activeOrg) : [];
   const error = orgsError ?? configError ?? stateError;
@@ -178,7 +202,16 @@ export function App() {
           setHighlightServices(false);
           void (drawer?.kind === "services" ? closeDrawer() : openDrawer({ kind: "services" }));
         }}
-        onOpenSettings={() => void (drawer?.kind === "settings" ? closeDrawer() : openDrawer({ kind: "settings" }))}
+        onOpenSettings={() => {
+          setSettingsTab("orgs");
+          void (drawer?.kind === "settings" ? closeDrawer() : openDrawer({ kind: "settings" }));
+        }}
+        onOpenHelp={() => {
+          setSettingsTab("help");
+          void (drawer?.kind === "settings" && settingsTab === "help"
+            ? closeDrawer()
+            : openDrawer({ kind: "settings" }));
+        }}
         onDisengage={disengageProfiles}
         onDisengageAll={disengageEverything}
       />
@@ -247,6 +280,16 @@ export function App() {
 
           {drawer.kind === "settings" && (
             <SettingsView
+              key={settingsTab}
+              initialTab={settingsTab}
+              isTourCompleted={tour.isCompleted}
+              onStartTour={(id) => {
+                // A tour points at the rail, which sits behind an open
+                // drawer — close it first so step one is visible.
+                void closeDrawer();
+                tour.start(id);
+              }}
+              onResetTours={tour.resetAll}
               orgs={orgs}
               activeOrgName={activeOrg ?? ""}
               accounts={accounts}
@@ -259,6 +302,10 @@ export function App() {
             />
           )}
         </Drawer>
+      )}
+
+      {tour.active && (
+        <TourOverlay active={tour.active} onNext={tour.next} onBack={tour.back} onDismiss={tour.dismiss} />
       )}
     </div>
   );

@@ -21,6 +21,10 @@ import { formatError } from "./errors";
  */
 export function useOrgs() {
   const [orgs, setOrgs] = useState<Org[]>([]);
+  /** False until the first listOrgs() settles. Callers that treat "no orgs"
+   * as a meaningful state (the first-run tour) must not act on the empty
+   * array this hook starts with. */
+  const [loaded, setLoaded] = useState(false);
   const [activeLoginName, setActiveLoginName] = useState<string | null>(null);
   const [activeLoginProgress, setActiveLoginProgress] = useState<LoginProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +33,8 @@ export function useOrgs() {
   useEffect(() => {
     listOrgs()
       .then(setOrgs)
-      .catch((e) => setError(`Failed to load Orgs: ${formatError(e)}`));
+      .catch((e) => setError(`Failed to load Orgs: ${formatError(e)}`))
+      .finally(() => setLoaded(true));
 
     onLoginProgress((p) => setActiveLoginProgress(p)).then((u) => {
       unlisten.current = u;
@@ -134,5 +139,5 @@ export function useOrgs() {
     }
   }, []);
 
-  return { orgs, login, refresh, refreshOne, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
+  return { orgs, loaded, login, refresh, refreshOne, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
 }

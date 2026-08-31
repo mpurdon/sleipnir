@@ -152,7 +152,7 @@ function EngagedChip({
   ];
 
   return (
-    <div className="rail-chip-block">
+    <div className="rail-chip-block" data-tour="rail-chip">
       <div className="rail-chip">
         <button className="rail-chip-alias hover-glow" onClick={() => setOpen((o) => !o)} title="Show copyable details">
           {alias}
@@ -211,6 +211,7 @@ export function Rail({
   onOpenProjects,
   onOpenServices,
   onOpenSettings,
+  onOpenHelp,
   onDisengage,
   onDisengageAll,
 }: {
@@ -233,6 +234,8 @@ export function Rail({
   onOpenProjects: () => void;
   onOpenServices: () => void;
   onOpenSettings: () => void;
+  /** Opens Settings on the help tab — guided tours and the docs link. */
+  onOpenHelp: () => void;
   onDisengage: (profiles: string[]) => void;
   onDisengageAll: () => void;
 }) {
@@ -285,7 +288,7 @@ export function Rail({
 
       <div className="rail-scroll">
       <SectionRule title="Orgs" />
-      <div className="org-list">
+      <div className="org-list" data-tour="rail-orgs">
         {orgs.map((org) => {
           const loggingIn = org.name === activeLoginName;
           const color = lampColor(org, loggingIn);
@@ -312,7 +315,7 @@ export function Rail({
             </div>
           );
         })}
-        <button className="label hover-glow rail-add-org" onClick={onAddOrg}>
+        <button className="label hover-glow rail-add-org" onClick={onAddOrg} data-tour="rail-add-org">
           + ADD ORG
         </button>
       </div>
@@ -321,6 +324,7 @@ export function Rail({
         <button
           className={`rail-menu-btn hover-glow${activeDrawer === "projects" ? " rail-menu-active" : ""}`}
           onClick={onOpenProjects}
+          data-tour="rail-projects"
         >
           <span>PROJECTS</span>
           <span className="label" style={{ color: "var(--c-dim)" }}>
@@ -330,6 +334,7 @@ export function Rail({
         <button
           className={`rail-menu-btn hover-glow${activeDrawer === "services" ? " rail-menu-active" : ""}${highlightServices ? " rail-menu-pulse" : ""}`}
           onClick={onOpenServices}
+          data-tour="rail-services"
         >
           <span>SERVICES</span>
           <span className="label" style={{ color: "var(--c-dim)" }}>
@@ -340,10 +345,10 @@ export function Rail({
 
       <SectionRule title="Engaged" />
       {engaged.length === 0 ? (
-        <div className="label rail-empty">NOTHING ENGAGED</div>
+        <div className="label rail-empty" data-tour="rail-engaged">NOTHING ENGAGED</div>
       ) : (
-        <div className="rail-engaged">
-          <button className="hover-glow rail-disengage-all" onClick={onDisengageAll} title="Disengage everything">
+        <div className="rail-engaged" data-tour="rail-engaged">
+          <button className="hover-glow rail-disengage-all" onClick={onDisengageAll} title="Disengage everything" data-tour="rail-disengage-all">
             <img src={disconnectIcon} alt="" className="disc-icon" draggable={false} />
             <span className="label" style={{ color: "var(--c-magenta)" }}>
               DISENGAGE ALL
@@ -396,6 +401,9 @@ export function Rail({
       <div className="sidebar-footer">
         <button className="settings-btn hover-glow" onClick={onOpenSettings}>
           ⚙ SETTINGS
+        </button>
+        <button className="help-btn hover-glow" onClick={onOpenHelp} title="Guided tours and help docs" data-tour="rail-help">
+          ?
         </button>
       </div>
       </div>

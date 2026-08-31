@@ -123,12 +123,18 @@ export function ServicesDrawer({
           onChange={(e) => setFilter(e.target.value)}
           autoFocus
         />
-        <button className="label hover-glow" style={{ color: "var(--c-cyan)" }} onClick={() => setRescanning(true)} title="Scan the org again and merge updates">
+        <button
+          className="label hover-glow"
+          style={{ color: "var(--c-cyan)" }}
+          onClick={() => setRescanning(true)}
+          title="Scan the org again and merge updates"
+          data-tour="services-rescan"
+        >
           ↻ RE-SCAN
         </button>
       </div>
 
-      <div className="catalog-rows">
+      <div className="catalog-rows" data-tour="service-rows">
         {filtered.map((a) => {
           const key = `service:${a.alias}`;
           const envs = Object.keys(a.environments) as Env[];

@@ -16,6 +16,7 @@ export function HoldButton({
   onConfirm,
   className,
   holdMs = 1200,
+  tourAnchor,
 }: {
   label: string;
   /** Shown while holding, e.g. "ADMIN → PRODUCTION — HOLD". */
@@ -26,6 +27,9 @@ export function HoldButton({
   onConfirm: () => void;
   className?: string;
   holdMs?: number;
+  /** `data-tour` value, so a guided tour can spotlight this button in
+   * either of its two rendered forms. */
+  tourAnchor?: string;
 }) {
   const [fraction, setFraction] = useState(0);
   const [holding, setHolding] = useState(false);
@@ -81,6 +85,7 @@ export function HoldButton({
         style={{ background: color, color: "var(--c-void)" }}
         disabled={disabled}
         onClick={onConfirm}
+        data-tour={tourAnchor}
       >
         {label}
       </button>
@@ -92,6 +97,7 @@ export function HoldButton({
       className={`engage-btn hold-btn ${className ?? ""}`}
       style={{ borderColor: color, color: holding ? "var(--c-void)" : color }}
       disabled={disabled}
+      data-tour={tourAnchor}
       onPointerDown={beginHold}
       onPointerUp={endHold}
       onPointerLeave={endHold}

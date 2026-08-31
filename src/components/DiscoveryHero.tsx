@@ -348,11 +348,21 @@ export function DiscoveryHero({
           </Slab>
         )}
         {needsLogin ? (
-          <button className="engage-btn hover-glow neon" style={{ background: "var(--c-cyan)", color: "var(--c-void)" }} onClick={onLogin}>
+          <button
+            className="engage-btn hover-glow neon"
+            style={{ background: "var(--c-cyan)", color: "var(--c-void)" }}
+            onClick={onLogin}
+            data-tour="discovery-scan"
+          >
             LOG IN TO {org.name.toUpperCase()}
           </button>
         ) : (
-          <button className="engage-btn hover-glow neon" style={{ background: "var(--c-cyan)", color: "var(--c-void)" }} onClick={scan}>
+          <button
+            className="engage-btn hover-glow neon"
+            style={{ background: "var(--c-cyan)", color: "var(--c-void)" }}
+            onClick={scan}
+            data-tour="discovery-scan"
+          >
             SCAN {org.name.toUpperCase()}
           </button>
         )}
@@ -413,7 +423,7 @@ export function DiscoveryHero({
       </p>
 
       <SectionRule title={`Services (${result.services.length})`} />
-      <div className="discovery-rows">
+      <div className="discovery-rows" data-tour="discovery-rows">
         {result.services.map((s) => (
           <ServiceRow
             key={s.account.alias}

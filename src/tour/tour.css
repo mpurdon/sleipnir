@@ -1,0 +1,207 @@
+/*
+  Guided-tour overlay. Lives above everything (portalled to <body>), so the
+  z-index only has to clear the connection-test modal.
+*/
+
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  /* The root itself must not eat clicks — only the scrim and card do, so a
+     spotlit control stays reachable while a step points at it. */
+  pointer-events: none;
+}
+
+.tour-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 12, 16, 0.72);
+  pointer-events: auto;
+}
+
+/*
+  The spotlight is a hole in the scrim: a transparent box with an enormous
+  outward shadow. That paints everything except the target, with no SVG mask
+  and no second stacking layer to keep in sync.
+*/
+.tour-spot {
+  position: absolute;
+  border: 1px solid var(--c-yellow);
+  box-shadow:
+    0 0 0 9999px rgba(11, 12, 16, 0.72),
+    0 0 8px rgba(217, 166, 72, 0.55);
+  pointer-events: none;
+  transition: top 0.12s ease-out, left 0.12s ease-out, width 0.12s ease-out, height 0.12s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-spot {
+    transition: none;
+  }
+}
+
+.tour-card {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.tour-slab {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 13px 11px;
+}
+
+.tour-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tour-head .label:first-child {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-skip {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--c-dim);
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tour-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--c-text);
+}
+
+.tour-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--c-dim);
+}
+
+.tour-dots {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.tour-dot {
+  width: 12px;
+  height: 2px;
+  background: var(--c-edge);
+}
+
+.tour-dot-on {
+  background: var(--c-yellow);
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.tour-back {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.tour-back:disabled {
+  cursor: default;
+}
+
+.tour-next {
+  background: var(--c-yellow);
+  color: var(--c-void);
+  border: 0;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  padding: 7px 14px;
+}
+
+/* ---------- help panel ---------- */
+
+.tour-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tour-list-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+.tour-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tour-list-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text);
+}
+
+.tour-list-blurb {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-dim);
+}
+
+.tour-list-start {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  align-self: flex-start;
+  padding: 2px 0;
+}
+
+.tour-reset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Rail help button, beside SETTINGS in the footer. */
+.help-btn {
+  background: none;
+  border: 1px solid var(--c-edge);
+  color: var(--c-dim);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 9px;
+  align-self: stretch;
+}
+
+.help-btn:hover {
+  color: var(--c-yellow);
+  border-color: var(--c-yellow);
+}

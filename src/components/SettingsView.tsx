@@ -4,9 +4,10 @@ import type { OrgConfig } from "../lib/tauri";
 import { AccountsView } from "./AccountsView";
 import { OrgsSettings } from "./OrgsSettings";
 import { DeveloperTab } from "./DeveloperTab";
+import { HelpPanel } from "../tour/HelpPanel";
 
-type SettingsTab = "orgs" | "accounts" | "developer";
-const TABS: SettingsTab[] = ["orgs", "accounts", "developer"];
+type SettingsTab = "help" | "orgs" | "accounts" | "developer";
+const TABS: SettingsTab[] = ["help", "orgs", "accounts", "developer"];
 
 export function SettingsView({
   orgs,
@@ -18,6 +19,10 @@ export function SettingsView({
   onSignOutOrg,
   onSaveAccount,
   onDeleteAccount,
+  initialTab = "orgs",
+  isTourCompleted,
+  onStartTour,
+  onResetTours,
 }: {
   orgs: Org[];
   activeOrgName: string;
@@ -28,8 +33,13 @@ export function SettingsView({
   onSignOutOrg: (name: string) => void;
   onSaveAccount: (a: Account) => void;
   onDeleteAccount: (alias: string) => void;
+  /** The rail's ? button opens straight onto help; ⚙ opens onto orgs. */
+  initialTab?: SettingsTab;
+  isTourCompleted: (id: string) => boolean;
+  onStartTour: (id: string) => void;
+  onResetTours: () => void;
 }) {
-  const [tab, setTab] = useState<SettingsTab>("orgs");
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
 
   return (
     <div className="settings-view">
@@ -47,6 +57,9 @@ export function SettingsView({
         ))}
       </div>
 
+      {tab === "help" && (
+        <HelpPanel isCompleted={isTourCompleted} onStartTour={onStartTour} onResetProgress={onResetTours} />
+      )}
       {tab === "orgs" && <OrgsSettings orgs={orgs} onSave={onSaveOrg} onDelete={onDeleteOrg} onSignOut={onSignOutOrg} />}
       {tab === "accounts" && (
         <AccountsView orgName={activeOrgName} accounts={accounts} onSave={onSaveAccount} onDelete={onDeleteAccount} />

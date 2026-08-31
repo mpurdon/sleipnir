@@ -117,6 +117,7 @@ export function ProjectsDrawer({
                 className={`pin-btn hover-glow${pinned ? " pin-btn-on" : ""}`}
                 title={pinned ? "Unpin" : "Pin to front"}
                 onClick={() => onTogglePin(p.name, !pinned)}
+                data-tour="project-pin"
               >
                 {pinned ? "★" : "☆"}
               </button>
@@ -138,6 +139,7 @@ export function ProjectsDrawer({
                 void eng.run({ orgName: org.name, project: p.name, aliases: p.members, env: s.env, mode: s.mode })
               }
               className="home-card-engage"
+              tourAnchor="project-engage"
             />
             <div className="card-links">
               <button className="label hover-glow card-change-link" onClick={() => setEditingCard(editingCard === key ? null : key)}>
@@ -156,7 +158,12 @@ export function ProjectsDrawer({
         );
       })}
 
-      <button className="label hover-glow" style={{ color: "var(--c-cyan)", alignSelf: "flex-start" }} onClick={() => setView({ kind: "new" })}>
+      <button
+        className="label hover-glow"
+        style={{ color: "var(--c-cyan)", alignSelf: "flex-start" }}
+        onClick={() => setView({ kind: "new" })}
+        data-tour="projects-new"
+      >
         + NEW PROJECT
       </button>
     </div>
