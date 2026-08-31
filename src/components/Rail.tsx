@@ -196,6 +196,7 @@ function EngagedChip({
  * doubles as the window-drag handle.
  */
 export function Rail({
+  devBuild,
   orgs,
   activeOrg,
   activeLoginName,
@@ -215,6 +216,9 @@ export function Rail({
   onDisengage,
   onDisengageAll,
 }: {
+  /** `tauri dev` build — badge the header so a dev window is never mistaken
+   * for the installed app. */
+  devBuild: boolean;
   orgs: Org[];
   activeOrg: string;
   activeLoginName: string | null;
@@ -276,6 +280,11 @@ export function Rail({
     <aside className="rail">
       <header className="rail-header" data-tauri-drag-region>
         <img src={sleipnirWordmark} alt="Sleipnir" className="rail-wordmark" data-tauri-drag-region draggable={false} />
+        {devBuild && (
+          <span className="label dev-badge" title="Development build — reads ~/.sleipnir-dev, not your real config">
+            DEV
+          </span>
+        )}
         <div className="rail-window-controls">
           <button className="win-btn hover-glow" title="Minimize" onClick={() => void minimizeWindow()}>
             –

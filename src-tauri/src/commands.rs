@@ -449,6 +449,15 @@ pub struct AppPaths {
     pub log_dir: String,
 }
 
+/// Whether this is a `tauri dev` build. The badge in the rail reads this
+/// rather than sniffing `location.protocol`, so what the UI claims and
+/// which `~/.sleipnir*` directory is actually in use come from one source
+/// and cannot drift apart.
+#[tauri::command]
+pub fn is_dev_build() -> bool {
+    crate::paths::is_dev()
+}
+
 #[tauri::command]
 pub fn app_paths(app: AppHandle) -> Result<AppPaths, AppError> {
     let log_dir = app.path().app_log_dir().map_err(|e| AppError::Io(e.to_string()))?;
@@ -475,6 +484,16 @@ pub fn read_logs(app: AppHandle, max_lines: Option<usize>) -> Result<String, App
         Err(e) => return Err(AppError::Io(e.to_string())),
     };
     entries.retain(|e| e.path().extension().map(|ext| ext == "log").unwrap_or(false));
+    // Dev and production share this directory (it derives from the bundle
+    // identifier), so pick only this build's own log — otherwise the newest
+    // file wins and a dev run hijacks the production log viewer.
+    entries.retain(|e| {
+        e.path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(crate::paths::owns_log_file)
+            .unwrap_or(false)
+    });
     entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
 
     let Some(latest) = entries.last() else { return Ok(String::new()) };

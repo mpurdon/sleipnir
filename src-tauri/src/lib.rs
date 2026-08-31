@@ -1,4 +1,5 @@
 mod applog;
+mod paths;
 mod aws;
 mod cli;
 mod commands;
@@ -53,7 +54,7 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .targets([
                     Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: Some("sleipnir".into()) }),
+                    Target::new(TargetKind::LogDir { file_name: Some(paths::log_file_stem().into()) }),
                 ])
                 .build(),
         )
@@ -81,6 +82,7 @@ pub fn run() {
             commands::disengage,
             commands::disengage_all,
             commands::refresh_engaged_credentials,
+            commands::is_dev_build,
             commands::app_paths,
             commands::open_in_file_manager,
             commands::read_logs,

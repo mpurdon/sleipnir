@@ -70,6 +70,20 @@
   cursor: grabbing;
 }
 
+/* Development build marker. Gold, not magenta: magenta is reserved for
+   production-environment danger, and a dev window is a "know where you
+   are", not a "this is dangerous". Sits inside the drag region but keeps
+   pointer-events so its title attribute is reachable. */
+.dev-badge {
+  color: var(--c-yellow);
+  border: 1px solid var(--c-yellow);
+  padding: 1px 5px;
+  line-height: 1.4;
+  letter-spacing: 1.2px;
+  flex: none;
+  cursor: help;
+}
+
 .rail-wordmark {
   width: 150px;
   height: auto;

@@ -139,6 +139,10 @@ export interface AppPaths {
   logDir: string;
 }
 
+/** True in a `tauri dev` run. Sourced from the backend rather than sniffed
+ * from location.protocol so the DEV badge and the `~/.sleipnir-dev` data
+ * directory can never disagree about which build this is. */
+export const isDevBuild = () => invoke<boolean>("is_dev_build");
 export const appPaths = () => invoke<AppPaths>("app_paths");
 export const openInFileManager = (path: string) => invoke<void>("open_in_file_manager", { path });
 export const readLogs = (maxLines?: number) => invoke<string>("read_logs", { maxLines });

@@ -14,7 +14,7 @@ use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const SERVICE: &str = "dev.purdonmoi.sleipnir";
+use crate::paths::keychain_service as service;
 const LEGACY_KINDS: [&str; 4] = ["client_id", "client_secret", "client_reg_expires_at", "refresh_token"];
 
 fn now_unix() -> i64 {
@@ -30,7 +30,7 @@ struct SecretBlob {
 }
 
 fn blob_entry(org: &str) -> Result<Entry, keyring::Error> {
-    Entry::new(SERVICE, &format!("secrets:{org}"))
+    Entry::new(service(), &format!("secrets:{org}"))
 }
 
 fn load_blob(org: &str) -> SecretBlob {
@@ -53,7 +53,7 @@ fn save_blob(org: &str, blob: &SecretBlob) -> Result<(), keyring::Error> {
 /// single blob item remains.
 fn migrate_legacy(org: &str) -> SecretBlob {
     let get = |kind: &str| {
-        Entry::new(SERVICE, &format!("{kind}:{org}"))
+        Entry::new(service(), &format!("{kind}:{org}"))
             .ok()
             .and_then(|e| e.get_password().ok())
     };
@@ -66,7 +66,7 @@ fn migrate_legacy(org: &str) -> SecretBlob {
     if blob.client_id.is_some() || blob.refresh_token.is_some() {
         let _ = save_blob(org, &blob);
         for kind in LEGACY_KINDS {
-            let _ = Entry::new(SERVICE, &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
+            let _ = Entry::new(service(), &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
         }
     }
     blob
@@ -119,6 +119,6 @@ pub fn load_refresh_token(org: &str) -> Option<String> {
 pub fn clear_org(org: &str) {
     let _ = blob_entry(org).and_then(|e| e.delete_credential());
     for kind in LEGACY_KINDS {
-        let _ = Entry::new(SERVICE, &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
+        let _ = Entry::new(service(), &format!("{kind}:{org}")).and_then(|e| e.delete_credential());
     }
 }

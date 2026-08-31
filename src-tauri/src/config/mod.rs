@@ -6,7 +6,7 @@ pub use schema::*;
 use std::path::PathBuf;
 
 fn config_dir() -> PathBuf {
-    dirs::home_dir().expect("home directory").join(".sleipnir")
+    crate::paths::data_dir()
 }
 
 fn config_path() -> PathBuf {

@@ -55,7 +55,7 @@ pub struct EngagedProfile {
 }
 
 fn state_path() -> PathBuf {
-    dirs::home_dir().expect("home directory").join(".sleipnir").join("state.json")
+    crate::paths::data_dir().join("state.json")
 }
 
 pub fn now_unix_ms() -> u64 {

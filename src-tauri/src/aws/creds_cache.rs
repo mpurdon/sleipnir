@@ -53,7 +53,7 @@ pub fn fresh_within(alias: &str, margin_ms: i64) -> bool {
 }
 
 fn cache_dir() -> PathBuf {
-    dirs::home_dir().expect("home directory").join(".sleipnir").join("cache")
+    crate::paths::data_dir().join("cache")
 }
 
 fn path(alias: &str) -> PathBuf {

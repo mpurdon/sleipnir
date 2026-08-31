@@ -10,6 +10,7 @@ import { useOrgs } from "./lib/useOrgs";
 import { useConfig } from "./lib/useConfig";
 import { useAppState } from "./lib/useAppState";
 import { chooseSide, DRAWER_ANIM_MS, expandFrame, prepareCollapse, type DrawerSide } from "./lib/drawerWindow";
+import { isDevBuild } from "./lib/tauri";
 import { useTour } from "./tour/useTour";
 import { TourOverlay } from "./tour/TourOverlay";
 import "./tour/tour.css";
@@ -82,7 +83,18 @@ export function App() {
   const [drawerAnim, setDrawerAnim] = useState<"in" | "out">("in");
   /** Which tab Settings opens on — the rail's ? button routes to help. */
   const [settingsTab, setSettingsTab] = useState<"help" | "orgs">("orgs");
+  /** Marks the rail when this is a `tauri dev` build, which runs against
+   * ~/.sleipnir-dev rather than your real config. */
+  const [devBuild, setDevBuild] = useState(false);
   const tour = useTour();
+
+  useEffect(() => {
+    // A failure here means no Tauri IPC at all, which is not a dev build in
+    // any sense worth badging — leave it off.
+    isDevBuild()
+      .then(setDevBuild)
+      .catch(() => setDevBuild(false));
+  }, []);
 
   // Default to the first Org once the real list loads.
   useEffect(() => {
@@ -176,6 +188,7 @@ export function App() {
       style={drawer && railPx ? ({ "--rail-w": `${railPx}px` } as React.CSSProperties) : undefined}
     >
       <Rail
+        devBuild={devBuild}
         orgs={orgs}
         activeOrg={activeOrg ?? ""}
         activeLoginName={activeLoginName}
