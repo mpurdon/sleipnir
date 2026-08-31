@@ -25,6 +25,10 @@ brew install --cask mpurdon/tap/sleipnir-aws
 Apple Silicon only for now. Signed and notarized — no Gatekeeper
 workarounds needed.
 
+📖 **[Help docs →](https://mpurdon.github.io/sleipnir/)** — getting started,
+discovery, projects, safety, and troubleshooting. The app carries the same
+walkthroughs as guided tours under **⚙ SETTINGS → HELP**.
+
 ## What it does
 
 - **Auto-discovery** — one login, one scan: sleipnir lists every account in
@@ -77,7 +81,12 @@ bun run tauri dev     # dev app with hot reload
 bun run tauri build   # release .app bundle
 cargo test            # run from src-tauri/ — includes the discovery
                       # heuristic's structure-preserving 166-account fixture
+
+bun run docs:serve    # help site at http://127.0.0.1:4318
 ```
+
+The help site is Markdown in `docs-src/`, built by `scripts/build-docs.ts`
+and deployed to GitHub Pages on push. In-app tours live in `src/tour/`.
 
 ## Status
 

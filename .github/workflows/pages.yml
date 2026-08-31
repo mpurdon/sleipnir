@@ -1,0 +1,68 @@
+# Publishes the help site (docs-src/ → site/) to GitHub Pages.
+#
+# Runs on any push to main that touches the docs, their build script, or the
+# images they embed. Also available from the Actions tab for a manual
+# rebuild.
+#
+# Pages must be configured once with "Build and deployment → Source: GitHub
+# Actions" (Settings → Pages), otherwise the deploy step fails with a 404.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs-src/**"
+      - "docs/**"
+      - "scripts/build-docs.ts"
+      - "src/assets/sleipnir-*.png"
+      - ".github/workflows/pages.yml"
+      - "package.json"
+      - "bun.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue instead of cancelling so a merged docs
+# change is always the one that lands.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build site
+        # The project site lives at /sleipnir/, so every link and asset path
+        # needs that prefix; local previews build with DOCS_BASE unset.
+        env:
+          DOCS_BASE: /sleipnir
+        run: bun run docs:build
+
+      - name: Check internal links
+        run: bun run scripts/check-docs-links.ts
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
