@@ -1,8 +1,10 @@
 # Release automation: push a tag like v0.2.0 and this workflow
 #   1. verifies the tag matches the app version in tauri.conf.json
 #   2. builds the macOS .app (arm64) and runs the Rust test suite
-#   3. publishes a GitHub release with the .app tarball
-#   4. bumps version + sha256 in mpurdon/homebrew-tap so
+#   3. refuses to go further unless the build is Developer ID signed,
+#      notarized, and stapled (when the signing secrets are present)
+#   4. publishes a GitHub release with the .app tarball
+#   5. bumps version + sha256 in mpurdon/homebrew-tap so
 #      `brew upgrade` picks it up
 #
 # Step 4 needs a TAP_GITHUB_TOKEN repo secret: a fine-grained PAT with
@@ -72,28 +74,71 @@ jobs:
         # headless — the cask installs from the .app tarball anyway.
         run: bun run tauri build --bundles app
 
+      # An ad-hoc signed build installs fine from a local build but reaches
+      # users as "sleipnir is damaged and can't be opened" once Homebrew
+      # attaches the quarantine flag. If the signing secrets were present,
+      # the artifact must actually be notarized and stapled before it is
+      # allowed anywhere near the release.
+      - name: Verify signature and notarization
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          APP=src-tauri/target/release/bundle/macos/sleipnir.app
+          if [ -z "$CERT" ]; then
+            echo "::warning::no signing secrets — publishing an ad-hoc signed build"
+            exit 0
+          fi
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || {
+            echo "::error::app is not Developer ID signed"; exit 1; }
+          xcrun stapler validate "$APP" || {
+            echo "::error::notarization ticket is not stapled"; exit 1; }
+          spctl -a -vv -t exec "$APP" 2>&1 | grep -q "source=Notarized Developer ID" || {
+            echo "::error::Gatekeeper does not accept the app as notarized"; exit 1; }
+          echo "::notice::Developer ID signed, notarized, and stapled"
+
       - name: Package tarball
         id: pkg
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          NAME="sleipnir_${VERSION}_aarch64.app.tar.gz"
           cd src-tauri/target/release/bundle/macos
-          tar -czf "sleipnir_${VERSION}_aarch64.app.tar.gz" sleipnir.app
-          echo "sha=$(shasum -a 256 "sleipnir_${VERSION}_aarch64.app.tar.gz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "file=src-tauri/target/release/bundle/macos/sleipnir_${VERSION}_aarch64.app.tar.gz" >> "$GITHUB_OUTPUT"
+          # COPYFILE_DISABLE stops bsdtar from embedding ._* AppleDouble
+          # entries for extended attributes, which differ run to run.
+          COPYFILE_DISABLE=1 tar -czf "$NAME" sleipnir.app
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "file=$PWD/$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.pkg.outputs.name }}
+          FILE: ${{ steps.pkg.outputs.file }}
         run: |
           # Idempotent so a rerun after a late-step failure doesn't die on
           # "release already exists" before reaching the tap bump.
+          #
+          # The published bytes are authoritative. tar is not reproducible,
+          # so re-uploading on a rerun would hand the same filename different
+          # bytes and break the sha256 for anyone who already downloaded it
+          # or has it in ~/Library/Caches/Homebrew/downloads. If the asset is
+          # already up, keep it and checksum what is actually published.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.file }}" --clobber
+            if gh release view "$GITHUB_REF_NAME" --json assets \
+                 --jq '.assets[].name' | grep -qxF "$NAME"; then
+              echo "::notice::$NAME is already published — reusing those bytes"
+              rm -rf published
+              gh release download "$GITHUB_REF_NAME" --pattern "$NAME" --dir published
+              FILE="published/$NAME"
+            else
+              gh release upload "$GITHUB_REF_NAME" "$FILE"
+            fi
           else
-            gh release create "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.file }}" \
+            gh release create "$GITHUB_REF_NAME" "$FILE" \
               --title "sleipnir $GITHUB_REF_NAME" \
               --generate-notes
           fi
+          echo "sha=$(shasum -a 256 "$FILE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Bump Homebrew tap
         env:
@@ -104,12 +149,16 @@ jobs:
             exit 0
           fi
           VERSION="${GITHUB_REF_NAME#v}"
-          SHA="${{ steps.pkg.outputs.sha }}"
+          SHA="${{ steps.publish.outputs.sha }}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/mpurdon/homebrew-tap.git" tap
           cd tap
           sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" Casks/sleipnir-aws.rb
           sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" Casks/sleipnir-aws.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "::notice::tap already at ${VERSION} with this sha — nothing to push"
+            exit 0
+          fi
           git commit -am "sleipnir ${VERSION}"
           git push

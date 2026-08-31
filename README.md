@@ -81,5 +81,6 @@ cargo test            # run from src-tauri/ — includes the discovery
 
 ## Status
 
-Early but daily-driven. Roadmap: signing/notarization, universal (Intel)
-builds, Windows packaging, release automation.
+Early but daily-driven. Signed and notarized, with tag-driven releases
+that publish to the Homebrew tap automatically. Roadmap: universal
+(Intel) builds, Windows packaging.
