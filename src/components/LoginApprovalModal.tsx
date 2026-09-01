@@ -69,17 +69,29 @@ export function LoginApprovalModal({
           Check this code matches the one shown in your browser before approving.
         </div>
 
-        <button
-          className="login-code hover-glow"
-          title="Copy the code"
-          onClick={() => void copy("code", userCode)}
-        >
-          {userCode}
-        </button>
-
-        <div className="label" style={{ color: copied === "code" ? "var(--c-lime)" : "var(--c-dim)" }}>
-          {copied === "code" ? "✓ CODE COPIED" : "CLICK THE CODE TO COPY IT"}
-        </div>
+        {/* An absent code must never render as an empty box: that reads as a
+            rendering glitch, when it actually means the comparison this
+            modal exists for cannot be made. Say so and point at the page
+            that does show it. */}
+        {userCode ? (
+          <>
+            <button
+              className="login-code hover-glow"
+              title="Copy the code"
+              onClick={() => void copy("code", userCode)}
+            >
+              {userCode}
+            </button>
+            <div className="label" style={{ color: copied === "code" ? "var(--c-lime)" : "var(--c-dim)" }}>
+              {copied === "code" ? "✓ CODE COPIED" : "CLICK THE CODE TO COPY IT"}
+            </div>
+          </>
+        ) : (
+          <div className="label login-modal-note">
+            The code did not reach this window — compare against the one on AWS's
+            page instead, or cancel and try again.
+          </div>
+        )}
 
         <div className="label login-modal-note">
           If they do not match, do not approve — close the browser page and start the login again.

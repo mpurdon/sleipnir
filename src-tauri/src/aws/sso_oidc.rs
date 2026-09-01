@@ -46,7 +46,11 @@ pub enum LoginError {
 /// Progress emitted to the frontend on the `sso:login-progress` event while
 /// a device-auth login is in flight.
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "stage", rename_all = "camelCase")]
+// `rename_all` on an enum renames the VARIANTS, not the fields inside struct
+// variants — which is why `stage` was camelCase while `user_code` and
+// `verification_uri_complete` silently reached the frontend in snake_case and
+// read as undefined. `rename_all_fields` is the one that covers the payload.
+#[serde(tag = "stage", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LoginProgress {
     Registering,
     /// The browser is open and AWS is showing a confirmation page. `user_code`
@@ -454,6 +458,42 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    /// The frontend reads these payloads as `userCode` and
+    /// `verificationUriComplete`. Nothing else checks that the wire format
+    /// matches the TypeScript type, and when it did not, the failure was
+    /// silent: `undefined` rendered as an empty box rather than an error, so
+    /// the login modal showed a blank code and its buttons operated on
+    /// nothing. Assert the exact keys the UI depends on.
+    #[test]
+    fn login_progress_payload_is_camel_case() {
+        let cases = [
+            LoginProgress::AwaitingBrowserApproval {
+                verification_uri_complete: "https://example/x".into(),
+                user_code: "ABCD-EFGH".into(),
+            },
+            LoginProgress::Polling {
+                verification_uri_complete: "https://example/x".into(),
+                user_code: "ABCD-EFGH".into(),
+            },
+        ];
+        for case in cases {
+            let json = serde_json::to_string(&case).unwrap();
+            assert!(json.contains(r#""userCode":"ABCD-EFGH""#), "missing userCode in {json}");
+            assert!(json.contains(r#""verificationUriComplete":"https://example/x""#), "missing verificationUriComplete in {json}");
+            assert!(!json.contains("user_code"), "snake_case leaked into {json}");
+            assert!(!json.contains("verification_uri_complete"), "snake_case leaked into {json}");
+        }
+
+        // The stage discriminants the frontend switches on.
+        for (case, stage) in [
+            (LoginProgress::Registering, "registering"),
+            (LoginProgress::Done, "done"),
+        ] {
+            let json = serde_json::to_string(&case).unwrap();
+            assert!(json.contains(&format!(r#""stage":"{stage}""#)), "bad stage in {json}");
+        }
+    }
+
     /// The wait must actually break on cancel, and quickly — the poll
     /// interval AWS dictates starts at 5s and grows on SlowDown, so a
     /// cancel that only lands between polls would feel broken.
