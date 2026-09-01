@@ -77,7 +77,8 @@ It also makes disengaging meaningful: the secret is removed from disk
 rather than a helper starting to refuse.
 
 The `credential_process` resolver still ships for anyone who wires it up by
-hand; it is just no longer written into your config automatically.
+hand — `sleipnir creds --profile <name>` — it is just no longer written into
+your config automatically.
 
 ## How often do I have to log in?
 
@@ -110,6 +111,31 @@ PRD — every other combination is an ordinary click. See
 Sleipnir falls back `ADMIN → POWERUSER → READONLY` and shows the access you
 actually got. It never escalates: asking for readonly cannot get you
 poweruser or admin.
+
+## Can I launch it from the terminal?
+
+Yes. The cask puts `sleipnir` on your `PATH`:
+
+```sh
+sleipnir            # foreground, attached to the terminal
+sleipnir &          # backgrounded, but still tied to that shell
+open -a sleipnir    # fully detached
+```
+
+`open -a sleipnir` is the one you usually want. Engaged profiles are
+refreshed in the background for as long as the app is running, so an app
+that dies with your terminal stops keeping your credentials fresh.
+
+The same command reaches the credential helper:
+
+```sh
+sleipnir creds --profile core-services
+```
+
+> [!NOTE]
+> If `sleipnir` is not found, your install predates the `PATH` entry. Run
+> `brew upgrade --cask sleipnir-aws` — or `brew reinstall --cask
+> sleipnir-aws` if you are already on the current version.
 
 ## Is there a Windows or Intel Mac build?
 

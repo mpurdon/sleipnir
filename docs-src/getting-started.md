@@ -24,6 +24,17 @@ Apple Silicon, macOS Monterey or newer. The app is signed and notarized, so
 it opens normally the first time — no right-click-Open, no `xattr`
 incantation.
 
+Launch it from Spotlight or the Applications folder, or from a terminal:
+
+```sh
+sleipnir            # foreground — Ctrl-C closes it
+open -a sleipnir    # detached — survives closing the terminal
+```
+
+The cask puts `sleipnir` on your `PATH`. Prefer `open -a sleipnir` for
+everyday use: the app refreshes engaged credentials in the background, so
+you want it outliving the terminal you started it from.
+
 ## 2. Add your organization
 
 You need one thing from your AWS administrator: the **start URL** for your
