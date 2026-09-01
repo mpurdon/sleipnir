@@ -28,14 +28,19 @@ function lampLabel(org: Org): string {
   return hrs > 0 ? `${hrs}H ${mins}M` : `${mins}M`;
 }
 
+/**
+ * While a login waits for approval the rail shows the device code itself,
+ * not a status word: it is the thing the user has to compare against the
+ * browser, and it must stay readable even if they close the approval
+ * overlay.
+ */
 function progressLabel(p: LoginProgress): string {
   switch (p.stage) {
     case "registering":
       return "REGISTERING…";
     case "awaitingBrowserApproval":
-      return "APPROVE IN BROWSER…";
     case "polling":
-      return "WAITING…";
+      return p.userCode ? `⧉ ${p.userCode}` : "APPROVE IN BROWSER…";
     case "done":
       return "DONE";
   }

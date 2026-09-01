@@ -64,8 +64,8 @@ export async function signOutOrg(name: string): Promise<Org> {
 // Mirrors src-tauri/src/aws/sso_oidc.rs's LoginProgress (serde tag = "stage").
 export type LoginProgress =
   | { stage: "registering" }
-  | { stage: "awaitingBrowserApproval"; verificationUriComplete: string }
-  | { stage: "polling" }
+  | { stage: "awaitingBrowserApproval"; verificationUriComplete: string; userCode: string }
+  | { stage: "polling"; verificationUriComplete: string; userCode: string }
   | { stage: "done" };
 
 export function onLoginProgress(cb: (p: LoginProgress) => void): Promise<() => void> {

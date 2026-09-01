@@ -46,8 +46,21 @@ pub enum LoginError {
 #[serde(tag = "stage", rename_all = "camelCase")]
 pub enum LoginProgress {
     Registering,
-    AwaitingBrowserApproval { verification_uri_complete: String },
-    Polling,
+    /// The browser is open and AWS is showing a confirmation page. `user_code`
+    /// is what the app must display so the person can check it against the
+    /// page in front of them — that comparison is the whole security value of
+    /// device authorization, and it cannot be made if only one side shows it.
+    AwaitingBrowserApproval {
+        verification_uri_complete: String,
+        user_code: String,
+    },
+    /// Still waiting for approval. Repeats the code and URI because the flow
+    /// enters this stage seconds after the browser opens, and dropping them
+    /// here would blank the comparison out from under the user mid-check.
+    Polling {
+        verification_uri_complete: String,
+        user_code: String,
+    },
     Done,
 }
 
@@ -151,16 +164,21 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
         .verification_uri_complete()
         .ok_or_else(|| LoginError::StartDeviceAuth("response missing verification_uri_complete".into()))?
         .to_string();
+    let user_code = device_auth
+        .user_code()
+        .ok_or_else(|| LoginError::StartDeviceAuth("response missing user_code".into()))?
+        .to_string();
     let mut interval_secs = device_auth.interval().max(1) as u64;
     let expires_in = device_auth.expires_in();
     let expires_at_unix = now_unix() + expires_in as i64;
 
     applog::info(
         format!("{}: opening browser for device approval", org.name),
-        &json!({"org": org.name, "verificationUriComplete": verification_uri_complete, "expiresInSecs": expires_in, "pollIntervalSecs": interval_secs}),
+        &json!({"org": org.name, "userCodeLen": user_code.len(), "expiresInSecs": expires_in, "pollIntervalSecs": interval_secs}),
     );
     emit(LoginProgress::AwaitingBrowserApproval {
         verification_uri_complete: verification_uri_complete.clone(),
+        user_code: user_code.clone(),
     });
     tauri_plugin_opener::open_url(&verification_uri_complete, None::<&str>)
         .map_err(|e| LoginError::OpenBrowser(e.to_string()))?;
@@ -177,7 +195,10 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
 
         tokio::time::sleep(Duration::from_secs(interval_secs)).await;
         polls += 1;
-        emit(LoginProgress::Polling);
+        emit(LoginProgress::Polling {
+            verification_uri_complete: verification_uri_complete.clone(),
+            user_code: user_code.clone(),
+        });
 
         let result = client
             .create_token()

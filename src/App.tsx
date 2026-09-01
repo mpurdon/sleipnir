@@ -5,6 +5,7 @@ import { ProjectsDrawer } from "./components/ProjectsDrawer";
 import { ServicesDrawer } from "./components/ServicesDrawer";
 import { OrgDrawer } from "./components/OrgDrawer";
 import { SettingsView } from "./components/SettingsView";
+import { LoginApprovalModal } from "./components/LoginApprovalModal";
 import { isSessionAlive } from "./lib/constants";
 import { useOrgs } from "./lib/useOrgs";
 import { useConfig } from "./lib/useConfig";
@@ -315,6 +316,10 @@ export function App() {
             />
           )}
         </Drawer>
+      )}
+
+      {activeLoginName && activeLoginProgress && (
+        <LoginApprovalModal orgName={activeLoginName} progress={activeLoginProgress} />
       )}
 
       {tour.active && (

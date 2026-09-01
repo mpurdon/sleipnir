@@ -164,6 +164,58 @@
   z-index: 50;
 }
 
+/* Device-authorization approval overlay. */
+.login-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  max-width: 320px;
+}
+
+.login-modal-instruction {
+  color: var(--c-text);
+  text-transform: none;
+  letter-spacing: 0.2px;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The one thing on screen worth reading at a glance: large, wide-tracked,
+   and selectable so it can be compared character by character. */
+.login-code {
+  background: none;
+  border: 1px solid var(--c-cyan);
+  color: var(--c-cyan);
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  text-align: center;
+  padding: 12px 8px;
+  cursor: pointer;
+  user-select: text;
+  word-break: break-all;
+}
+
+.login-modal-note {
+  color: var(--c-yellow);
+  text-transform: none;
+  letter-spacing: 0.2px;
+  font-weight: 400;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.login-modal-link {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  align-self: flex-start;
+  padding: 2px 0;
+}
+
 .test-modal-inner {
   display: flex;
   flex-direction: column;
