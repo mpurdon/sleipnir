@@ -27,13 +27,13 @@ incantation.
 Launch it from Spotlight or the Applications folder, or from a terminal:
 
 ```sh
-sleipnir            # foreground — Ctrl-C closes it
-open -a sleipnir    # detached — survives closing the terminal
+sleipnir
 ```
 
-The cask puts `sleipnir` on your `PATH`. Prefer `open -a sleipnir` for
-everyday use: the app refreshes engaged credentials in the background, so
-you want it outliving the terminal you started it from.
+The cask puts `sleipnir` on your `PATH`, and it detaches from the terminal
+on its own — you get your shell back and the app keeps running after you
+close the window. That matters because engaged credentials are only
+refreshed while the app runs.
 
 ## 2. Add your organization
 

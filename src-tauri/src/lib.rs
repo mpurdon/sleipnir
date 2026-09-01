@@ -1,4 +1,5 @@
 mod applog;
+mod launch;
 mod paths;
 mod aws;
 mod cli;
@@ -21,9 +22,26 @@ use tauri_plugin_log::{Target, TargetKind};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("creds") {
-        cli::run_creds(&args[2..]);
-        return;
+    match args.get(1).map(String::as_str) {
+        Some("creds") => {
+            cli::run_creds(&args[2..]);
+            return;
+        }
+        // Bare `sleipnir` in a terminal: hand off to a detached instance and
+        // give the shell back. See launch.rs for why, and for the two
+        // conditions that keep this from recursing or firing under
+        // `tauri dev`.
+        None => {
+            if launch::relaunch_detached() {
+                return;
+            }
+        }
+        // Explicit opt-out, for watching the log on stdout.
+        Some("--foreground") | Some("-f") => {}
+        Some(other) => {
+            eprintln!("sleipnir: unrecognised argument `{other}`\n\n{}", launch::USAGE);
+            std::process::exit(2);
+        }
     }
 
     tauri::Builder::default()

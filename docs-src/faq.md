@@ -114,23 +114,24 @@ poweruser or admin.
 
 ## Can I launch it from the terminal?
 
-Yes. The cask puts `sleipnir` on your `PATH`:
+Yes. The cask puts `sleipnir` on your `PATH`, and a bare invocation
+detaches by itself:
 
 ```sh
-sleipnir            # foreground, attached to the terminal
-sleipnir &          # backgrounded, but still tied to that shell
-open -a sleipnir    # fully detached
+sleipnir                        # launches, hands your shell straight back
+sleipnir --foreground           # stays attached, log on stdout
+sleipnir creds --profile <name> # the credential helper
 ```
 
-`open -a sleipnir` is the one you usually want. Engaged profiles are
-refreshed in the background for as long as the app is running, so an app
-that dies with your terminal stops keeping your credentials fresh.
+Detaching is the default deliberately. Engaged profiles are refreshed only
+while the app runs, so an app that died with its terminal would quietly
+stop keeping your credentials fresh — and the symptom, expired keys some
+time later, points nowhere near the cause.
 
-The same command reaches the credential helper:
-
-```sh
-sleipnir creds --profile core-services
-```
+`--foreground` is the escape hatch when you want to watch the log live.
+Redirecting output keeps it attached too, so `sleipnir > run.log 2>&1`
+behaves the way you would expect rather than detaching and logging
+nothing.
 
 > [!NOTE]
 > If `sleipnir` is not found, your install predates the `PATH` entry. Run
