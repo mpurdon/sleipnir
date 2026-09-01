@@ -235,12 +235,35 @@
   line-height: 1.45;
 }
 
+.login-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 .login-modal-link {
   background: none;
   border: 0;
   cursor: pointer;
   align-self: flex-start;
   padding: 2px 0;
+}
+
+/* The cancel control must never wrap: "✕" landing on its own line above
+   "CANCEL" reads as two broken glyphs rather than one button. */
+.login-modal .rail-group-head button {
+  white-space: nowrap;
+  flex: none;
+}
+
+.login-modal .rail-group-head button:disabled {
+  cursor: default;
+}
+
+.login-modal .rail-group-head {
+  align-items: baseline;
+  gap: 10px;
 }
 
 .test-modal-inner {

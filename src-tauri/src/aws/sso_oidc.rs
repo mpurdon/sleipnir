@@ -10,6 +10,7 @@ use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
 use aws_sdk_ssooidc::Client as OidcClient;
 use serde::Serialize;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
@@ -30,6 +31,8 @@ pub enum LoginError {
     OpenBrowser(String),
     #[error("device authorization expired before it was approved")]
     Expired,
+    #[error("login cancelled")]
+    Cancelled,
     #[error("access denied")]
     AccessDenied,
     #[error("creating token: {0}")]
@@ -62,6 +65,41 @@ pub enum LoginProgress {
         user_code: String,
     },
     Done,
+}
+
+/// Set by the `cancel_login` command to break a device-auth poll out of its
+/// wait. Cleared at the start of every login.
+///
+/// Only one login runs at a time — the frontend gates on `activeLoginName`
+/// and the `sso:login-progress` event carries no org identifier precisely
+/// because of that — so a single flag cannot cancel the wrong flow.
+pub static CANCEL_LOGIN: AtomicBool = AtomicBool::new(false);
+
+/// Asks the in-flight login, if any, to stop. Harmless when none is running:
+/// the next login clears the flag before it starts polling.
+pub fn request_cancel() {
+    CANCEL_LOGIN.store(true, Ordering::SeqCst);
+}
+
+fn cancelled() -> bool {
+    CANCEL_LOGIN.load(Ordering::SeqCst)
+}
+
+/// Sleeps in slices so a cancel lands in a quarter second rather than after
+/// the full AWS-dictated poll interval, which starts at 5s and grows when
+/// AWS asks us to slow down.
+async fn sleep_cancellable(secs: u64) -> Result<(), LoginError> {
+    let slices = secs * 4;
+    for _ in 0..slices {
+        if cancelled() {
+            return Err(LoginError::Cancelled);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    if cancelled() {
+        return Err(LoginError::Cancelled);
+    }
+    Ok(())
 }
 
 fn now_unix() -> i64 {
@@ -137,6 +175,10 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
         &json!({"org": org.name, "startUrl": org.start_url, "region": org.region}),
     );
 
+    // Clear any cancel left over from a previous attempt before this one
+    // starts waiting, or the new login would abort immediately.
+    CANCEL_LOGIN.store(false, Ordering::SeqCst);
+
     emit(LoginProgress::Registering);
     let reg = get_or_register_client(org).await?;
     let client = oidc_client(&org.region);
@@ -193,7 +235,12 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
             return Err(LoginError::Expired);
         }
 
-        tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+        sleep_cancellable(interval_secs).await.inspect_err(|_| {
+            applog::info(
+                format!("{}: login cancelled by user", org.name),
+                &json!({"org": org.name, "pollsAttempted": polls}),
+            );
+        })?;
         polls += 1;
         emit(LoginProgress::Polling {
             verification_uri_complete: verification_uri_complete.clone(),
@@ -224,6 +271,19 @@ pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, Logi
                         applog::error(
                             format!("{}: device code expired", org.name),
                             &json!({"org": org.name, "pollsAttempted": polls}),
+                        );
+                        return Err(LoginError::Expired);
+                    }
+                    // AWS returns invalid_grant, not ExpiredTokenException,
+                    // when a device code lapses — observed on a real timed-out
+                    // approval. Without this arm it fell to the catch-all and
+                    // the user was shown a raw exception dump instead of being
+                    // told their code had run out. On a device-code poll an
+                    // invalid grant can only mean the code is no longer usable.
+                    CreateTokenError::InvalidGrantException(e) => {
+                        applog::error(
+                            format!("{}: device code no longer valid (invalid_grant)", org.name),
+                            &json!({"org": org.name, "pollsAttempted": polls, "awsError": format!("{e:?}")}),
                         );
                         return Err(LoginError::Expired);
                     }
@@ -394,6 +454,35 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    /// The wait must actually break on cancel, and quickly — the poll
+    /// interval AWS dictates starts at 5s and grows on SlowDown, so a
+    /// cancel that only lands between polls would feel broken.
+    #[tokio::test]
+    async fn cancel_breaks_the_poll_wait_promptly() {
+        CANCEL_LOGIN.store(false, Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        let handle = tokio::spawn(async { sleep_cancellable(30).await });
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        request_cancel();
+        let result = handle.await.expect("task panicked");
+        let elapsed = started.elapsed();
+
+        assert!(matches!(result, Err(LoginError::Cancelled)), "expected Cancelled, got {result:?}");
+        assert!(elapsed < Duration::from_secs(2), "cancel took {elapsed:?}, should be sub-second");
+        CANCEL_LOGIN.store(false, Ordering::SeqCst);
+    }
+
+    /// A cancel left set by a previous attempt must not kill the next login
+    /// the instant it starts waiting.
+    #[tokio::test]
+    async fn a_stale_cancel_does_not_abort_the_next_login() {
+        request_cancel();
+        // This is what login() does before it begins polling.
+        CANCEL_LOGIN.store(false, Ordering::SeqCst);
+        let result = sleep_cancellable(0).await;
+        assert!(result.is_ok(), "stale cancel leaked into a fresh login: {result:?}");
+    }
+
     use super::*;
 
     #[test]

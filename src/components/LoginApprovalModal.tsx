@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { LoginProgress } from "../lib/tauri";
 import { Slab } from "../theme";
 
@@ -19,19 +20,15 @@ import { Slab } from "../theme";
 export function LoginApprovalModal({
   orgName,
   progress,
+  onCancel,
 }: {
   orgName: string;
   progress: LoginProgress;
+  onCancel: () => void;
 }) {
   const [copied, setCopied] = useState<"code" | "link" | null>(null);
-  /** Dismissing hides the overlay but does not cancel the login — an
-   * abandoned device code stays pending with AWS for several minutes, and
-   * covering the rail for that long would strand the user. The rail keeps
-   * showing the code, so nothing is lost by closing this. Survives the
-   * polling re-renders because the component instance is not remounted. */
-  const [dismissed, setDismissed] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
-  if (dismissed) return null;
   if (progress.stage !== "awaitingBrowserApproval" && progress.stage !== "polling") return null;
   const { userCode, verificationUriComplete } = progress;
 
@@ -52,15 +49,19 @@ export function LoginApprovalModal({
       <Slab tint="var(--c-cyan)" cut={6} className="login-modal">
         <div className="rail-group-head">
           <span className="label" style={{ color: "var(--c-cyan)" }}>
-            APPROVE IN BROWSER · {orgName.toUpperCase()}
+            {orgName.toUpperCase()} · LOGIN
           </span>
           <button
             className="label hover-glow"
-            style={{ color: "var(--c-dim)" }}
-            title="Hide this — the code stays visible in the rail"
-            onClick={() => setDismissed(true)}
+            style={{ color: cancelling ? "var(--c-dim)" : "var(--c-magenta)" }}
+            title="Stop waiting and abandon this login"
+            disabled={cancelling}
+            onClick={() => {
+              setCancelling(true);
+              onCancel();
+            }}
           >
-            ✕
+            {cancelling ? "CANCELLING…" : "✕ CANCEL"}
           </button>
         </div>
 
@@ -84,14 +85,27 @@ export function LoginApprovalModal({
           If they do not match, do not approve — close the browser page and start the login again.
         </div>
 
-        <button
-          className="label hover-glow login-modal-link"
-          style={{ color: copied === "link" ? "var(--c-lime)" : "var(--c-dim)" }}
-          title={verificationUriComplete}
-          onClick={() => void copy("link", verificationUriComplete)}
-        >
-          {copied === "link" ? "✓ LINK COPIED" : "COPY APPROVAL LINK"}
-        </button>
+        {/* Closing the browser window used to be unrecoverable: the code
+            stays pending with AWS for its full lifetime, but there was no
+            way back to the page it belongs to. */}
+        <div className="login-modal-actions">
+          <button
+            className="label hover-glow login-modal-link"
+            style={{ color: "var(--c-cyan)" }}
+            title="Open the approval page again"
+            onClick={() => void openUrl(verificationUriComplete).catch(() => copy("link", verificationUriComplete))}
+          >
+            ↗ REOPEN BROWSER
+          </button>
+          <button
+            className="label hover-glow login-modal-link"
+            style={{ color: copied === "link" ? "var(--c-lime)" : "var(--c-dim)" }}
+            title={verificationUriComplete}
+            onClick={() => void copy("link", verificationUriComplete)}
+          >
+            {copied === "link" ? "✓ LINK COPIED" : "COPY LINK"}
+          </button>
+        </div>
       </Slab>
     </div>,
     document.body,

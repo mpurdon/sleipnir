@@ -41,6 +41,7 @@ export function App() {
     orgs,
     loaded: orgsLoaded,
     login,
+    abandonLogin,
     refresh: refreshOrgs,
     refreshOne,
     activeLoginName,
@@ -319,7 +320,11 @@ export function App() {
       )}
 
       {activeLoginName && activeLoginProgress && (
-        <LoginApprovalModal orgName={activeLoginName} progress={activeLoginProgress} />
+        <LoginApprovalModal
+          orgName={activeLoginName}
+          progress={activeLoginProgress}
+          onCancel={() => void abandonLogin()}
+        />
       )}
 
       {tour.active && (

@@ -64,6 +64,7 @@ pub fn run() {
             commands::delete_org,
             commands::sign_out_org,
             commands::login_org,
+            commands::cancel_login,
             commands::refresh_session,
             commands::list_accounts,
             commands::save_account,

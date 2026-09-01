@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Org } from "./types";
 import {
+  cancelLogin,
   deleteOrg,
   listOrgs,
   loginOrg,
@@ -29,6 +30,9 @@ export function useOrgs() {
   const [activeLoginProgress, setActiveLoginProgress] = useState<LoginProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const unlisten = useRef<(() => void) | null>(null);
+  /** Set when the user cancels, so the rejection that follows is reported as
+   * the intended outcome rather than a failure banner. */
+  const cancelledLogin = useRef(false);
 
   useEffect(() => {
     listOrgs()
@@ -84,16 +88,30 @@ export function useOrgs() {
     setActiveLoginName(name);
     setActiveLoginProgress({ stage: "registering" });
     setError(null);
+    cancelledLogin.current = false;
     try {
       const updated = await loginOrg(name);
       setOrgs((prev) => prev.map((o) => (o.name === name ? updated : o)));
     } catch (e) {
-      setError(`Login failed for ${name}: ${formatError(e)}`);
+      if (!cancelledLogin.current) setError(`Login failed for ${name}: ${formatError(e)}`);
     } finally {
       setActiveLoginName(null);
       setActiveLoginProgress(null);
     }
   }, [activeLoginName]);
+
+  /** Abandons the in-flight login. The backend poll breaks out within a
+   * quarter second and `login`'s promise rejects, which clears
+   * `activeLoginName` and frees the user to try again. */
+  const abandonLogin = useCallback(async () => {
+    cancelledLogin.current = true;
+    try {
+      await cancelLogin();
+    } catch {
+      // The command is fire-and-forget; if it never lands the poll still
+      // expires on its own and the flag simply keeps the banner quiet.
+    }
+  }, []);
 
   /** Re-reads org statuses — call after backend operations that may have
    * silently refreshed a token (scan/engage chain login internally). */
@@ -139,5 +157,5 @@ export function useOrgs() {
     }
   }, []);
 
-  return { orgs, loaded, login, refresh, refreshOne, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
+  return { orgs, loaded, login, abandonLogin, refresh, refreshOne, activeLoginName, activeLoginProgress, addOrg, removeOrg, signOut, error, clearError: () => setError(null) };
 }

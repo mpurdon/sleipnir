@@ -91,6 +91,17 @@ pub async fn login_org(app: AppHandle, name: String) -> Result<OrgStatus, AppErr
     }
 }
 
+/// Aborts an in-flight device-authorization login.
+///
+/// Exists because closing the browser window leaves nothing to abort it:
+/// the poll would otherwise run for the full ten-minute device-code
+/// lifetime, and the frontend refuses to start a second login while one is
+/// active — so the user was stranded with no way forward or back.
+#[tauri::command]
+pub fn cancel_login() {
+    sso_oidc::request_cancel();
+}
+
 #[tauri::command]
 pub fn list_accounts() -> Vec<Account> {
     config::load_or_seed().accounts
