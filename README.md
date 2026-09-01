@@ -88,6 +88,14 @@ bun run docs:serve    # help site at http://127.0.0.1:4318
 The help site is Markdown in `docs-src/`, built by `scripts/build-docs.ts`
 and deployed to GitHub Pages on push. In-app tours live in `src/tour/`.
 
+A dev build wears a gold **DEV** badge and keeps its own state — config,
+runtime state, credential cache, Keychain entries and log file all live
+under `~/.sleipnir-dev` rather than `~/.sleipnir`, so it starts empty and
+needs its own org and login. That is deliberate: both builds otherwise
+share `~/.aws/credentials` and the background rotation tick, and a dev
+window could disengage — strip keys from — profiles the installed app put
+there. The split lives in `src-tauri/src/paths.rs`.
+
 ## Status
 
 Early but daily-driven. Signed and notarized, with tag-driven releases
