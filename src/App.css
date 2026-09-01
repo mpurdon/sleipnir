@@ -183,20 +183,47 @@
 }
 
 /* The one thing on screen worth reading at a glance: large, wide-tracked,
-   and selectable so it can be compared character by character. */
+   and selectable so it can be compared character by character.
+
+   Lit like the wordmark rather than tinted flat cyan. Sampling the artwork,
+   the logo's strokes are a near-white core (#fdfdfd) inside a cyan bloom —
+   that combination is what reads as "glowing", and a flat --c-cyan fill does
+   not, because the glacial-ice token is deliberately desaturated for use as
+   ordinary UI text. So: a hot core, and the bloom in the token's own hue.
+
+   `zero` and `ss02` give JetBrains Mono its slashed zero and disambiguated
+   glyphs. That matters more here than anywhere else in the app: this string
+   exists to be compared character by character against a browser, and 0/O
+   and 1/l/I are exactly where such a comparison silently goes wrong. */
 .login-code {
   background: none;
   border: 1px solid var(--c-cyan);
-  color: var(--c-cyan);
+  color: #eaf7fd;
+  text-shadow:
+    0 0 6px rgba(143, 199, 216, 0.75),
+    0 0 16px rgba(143, 199, 216, 0.45),
+    0 0 32px rgba(143, 199, 216, 0.2);
+  box-shadow:
+    inset 0 0 18px rgba(143, 199, 216, 0.12),
+    0 0 10px rgba(143, 199, 216, 0.15);
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 800;
-  letter-spacing: 4px;
+  letter-spacing: 5px;
+  /* The tracking is symmetric, so the trailing space would visually
+     off-centre the string without this. */
+  text-indent: 5px;
+  font-variant-ligatures: none;
+  font-feature-settings: "zero" 1, "ss02" 1;
   text-align: center;
-  padding: 12px 8px;
+  padding: 14px 8px;
   cursor: pointer;
   user-select: text;
   word-break: break-all;
+}
+
+.login-code:hover {
+  border-color: #eaf7fd;
 }
 
 .login-modal-note {
