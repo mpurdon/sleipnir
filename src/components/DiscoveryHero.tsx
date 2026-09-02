@@ -66,7 +66,7 @@ function ServiceRow({
           </button>
         )}
         <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={() => setExpanded((e) => !e)}>
-          {expanded ? "▾" : "▸"}
+          <span className="chev">{expanded ? "▾" : "▸"}</span>
         </button>
       </div>
 
@@ -439,7 +439,7 @@ export function DiscoveryHero({
       </div>
 
       <button className="label hover-glow" style={{ color: "var(--c-cyan)", alignSelf: "flex-start" }} onClick={() => setShowStandalone((v) => !v)}>
-        {showStandalone ? "▾" : "▸"} STANDALONE ACCOUNTS ({result.standalone.length})
+        <span className="chev">{showStandalone ? "▾" : "▸"}</span> STANDALONE ACCOUNTS ({result.standalone.length})
       </button>
       {showStandalone && (
         <div className="discovery-rows">

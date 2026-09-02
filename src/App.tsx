@@ -58,6 +58,10 @@ export function App() {
     upsertAccount,
     removeAccount,
     upsertProject,
+    deletedProjects,
+    removeProject,
+    restoreProject,
+    purgeProject,
     replaceAccounts,
     error: configError,
     clearError: clearConfigError,
@@ -257,6 +261,10 @@ export function App() {
               onStateChange={onStateChangeWithOrgRefresh}
               onTogglePin={togglePin}
               onCreateProject={upsertProject}
+              deletedProjects={deletedProjects.filter((d) => d.org === activeOrg)}
+              onDeleteProject={removeProject}
+              onRestoreProject={restoreProject}
+              onPurgeProject={purgeProject}
             />
           )}
 

@@ -21,6 +21,17 @@ impl From<crate::aws::sso_oidc::LoginError> for AppError {
     }
 }
 
+impl From<crate::config::RestoreError> for AppError {
+    fn from(e: crate::config::RestoreError) -> Self {
+        match e {
+            crate::config::RestoreError::Io(io) => AppError::Io(io.to_string()),
+            // A name clash is the user's to resolve, not a system failure —
+            // Invalid carries the actionable message straight to the UI.
+            other => AppError::Invalid(other.to_string()),
+        }
+    }
+}
+
 impl From<crate::aws::sso::DiscoveryError> for AppError {
     fn from(e: crate::aws::sso::DiscoveryError) -> Self {
         AppError::Discovery(e.to_string())

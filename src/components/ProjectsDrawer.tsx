@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Account, AppState, Env, Mode, Org, Project } from "../lib/types";
+import type { Account, AppState, DeletedProject, Env, Mode, Org, Project } from "../lib/types";
 import { ENV_LABELS } from "../lib/constants";
 import { useEngage } from "../lib/useEngage";
 import { clampSel, defaultSel, EngageFeedback, modeMeta, SelPills, type Sel } from "./engageUi";
@@ -10,6 +10,105 @@ import { Slab } from "../theme";
 
 type View = { kind: "list" } | { kind: "new" } | { kind: "detail"; name: string };
 
+function sinceLabel(ms: number): string {
+  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (secs < 60) return "JUST NOW";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}M AGO`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}H AGO`;
+  return `${Math.round(hrs / 24)}D AGO`;
+}
+
+
+/**
+ * The archive. Deleting a project is reversible, and this is where the undo
+ * lives — separate from the drawer so it can be rendered and checked on its
+ * own, and because the drawer was already long enough.
+ */
+export function DeletedProjects({
+  deleted,
+  onRestore,
+  onPurge,
+}: {
+  deleted: DeletedProject[];
+  onRestore: (name: string) => Promise<void> | void;
+  onPurge: (name: string) => Promise<void> | void;
+}) {
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [confirmingPurge, setConfirmingPurge] = useState<string | null>(null);
+
+  if (deleted.length === 0) return null;
+
+  return (
+    <div className="deleted-projects" data-tour="projects-deleted">
+      <button
+        className="label hover-glow"
+        style={{ color: "var(--c-dim)", alignSelf: "flex-start" }}
+        onClick={() => setShowDeleted((v) => !v)}
+      >
+        <span className="chev">{showDeleted ? "▾" : "▸"}</span> RECENTLY DELETED ({deleted.length})
+      </button>
+
+      {showDeleted &&
+        deleted.map((d) => (
+          <Slab key={d.name} cut={5} tint="var(--c-edge)" className="deleted-row">
+            <div className="deleted-row-head">
+              <span className="deleted-name">{d.name}</span>
+              <span className="label" style={{ color: "var(--c-dim)" }}>
+                {sinceLabel(d.deletedAtUnixMs)}
+              </span>
+            </div>
+            <div className="label" style={{ color: "var(--c-dim)" }}>
+              {d.members.length} SERVICE{d.members.length === 1 ? "" : "S"}
+            </div>
+            {confirmingPurge === d.name ? (
+              <div className="danger-actions">
+                <span className="label" style={{ color: "var(--c-magenta)" }}>
+                  PERMANENT — NO UNDO
+                </span>
+                <button
+                  className="label hover-glow"
+                  style={{ color: "var(--c-magenta)" }}
+                  onClick={() => {
+                    void onPurge(d.name);
+                    setConfirmingPurge(null);
+                  }}
+                >
+                  DELETE FOREVER
+                </button>
+                <button
+                  className="label hover-glow"
+                  style={{ color: "var(--c-dim)" }}
+                  onClick={() => setConfirmingPurge(null)}
+                >
+                  CANCEL
+                </button>
+              </div>
+            ) : (
+              <div className="danger-actions">
+                <button
+                  className="label hover-glow"
+                  style={{ color: "var(--c-cyan)" }}
+                  onClick={() => void onRestore(d.name)}
+                >
+                  ↩ RESTORE
+                </button>
+                <button
+                  className="label hover-glow"
+                  style={{ color: "var(--c-dim)" }}
+                  onClick={() => setConfirmingPurge(d.name)}
+                >
+                  DELETE FOREVER…
+                </button>
+              </div>
+            )}
+          </Slab>
+        ))}
+    </div>
+  );
+}
+
 export function ProjectsDrawer({
   org,
   accounts,
@@ -18,6 +117,10 @@ export function ProjectsDrawer({
   onStateChange,
   onTogglePin,
   onCreateProject,
+  deletedProjects,
+  onDeleteProject,
+  onRestoreProject,
+  onPurgeProject,
 }: {
   org: Org;
   accounts: Account[];
@@ -26,6 +129,11 @@ export function ProjectsDrawer({
   onStateChange: (s: AppState) => void;
   onTogglePin: (project: string, pinned: boolean) => void;
   onCreateProject: (p: Project) => Promise<void>;
+  /** The archive — deleting a project is reversible. */
+  deletedProjects: DeletedProject[];
+  onDeleteProject: (name: string) => Promise<void> | void;
+  onRestoreProject: (name: string) => Promise<void> | void;
+  onPurgeProject: (name: string) => Promise<void> | void;
 }) {
   const eng = useEngage(onStateChange);
   const [view, setView] = useState<View>({ kind: "list" });
@@ -87,6 +195,7 @@ export function ProjectsDrawer({
           accounts={accounts}
           state={state}
           onUpdate={onCreateProject}
+          onDelete={onDeleteProject}
           onBack={() => setView({ kind: "list" })}
         />
       );
@@ -166,6 +275,12 @@ export function ProjectsDrawer({
       >
         + NEW PROJECT
       </button>
+
+      <DeletedProjects
+        deleted={deletedProjects}
+        onRestore={onRestoreProject}
+        onPurge={onPurgeProject}
+      />
     </div>
   );
 }

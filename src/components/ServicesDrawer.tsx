@@ -166,7 +166,7 @@ export function ServicesDrawer({
                     </span>
                   )}
                   <span className="label" style={{ color: "var(--c-dim)" }}>
-                    {isOpen ? "▾" : "▸"}
+                    <span className="chev">{isOpen ? "▾" : "▸"}</span>
                   </span>
                 </button>
               </div>

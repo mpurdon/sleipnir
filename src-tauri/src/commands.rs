@@ -130,10 +130,47 @@ pub fn save_project(project: Project) -> Result<Vec<Project>, AppError> {
     Ok(config::upsert_project(project)?.projects)
 }
 
+/// Both halves of the projects view. Delete, restore and purge all return
+/// this so the UI never has to re-fetch to learn what the archive now holds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectsOutcome {
+    pub projects: Vec<Project>,
+    pub deleted: Vec<crate::config::DeletedProject>,
+}
+
+impl From<crate::config::SleipnirConfig> for ProjectsOutcome {
+    fn from(cfg: crate::config::SleipnirConfig) -> Self {
+        Self { projects: cfg.projects, deleted: cfg.deleted_projects }
+    }
+}
+
 #[tauri::command]
-pub fn delete_project(name: String) -> Result<Vec<Project>, AppError> {
-    applog::info("delete_project", &json!({"name": name}));
-    Ok(config::delete_project(&name)?.projects)
+pub fn list_deleted_projects() -> Vec<crate::config::DeletedProject> {
+    config::load_or_seed().deleted_projects
+}
+
+/// Soft-deletes. The project moves to the archive in config.toml and can be
+/// restored; nothing about the engaged map changes, because profiles engaged
+/// through this project are still live and disengaging them behind the user's
+/// back would be a much bigger action than the one they asked for.
+#[tauri::command]
+pub fn delete_project(name: String) -> Result<ProjectsOutcome, AppError> {
+    applog::info("delete_project (archived, restorable)", &json!({"name": name}));
+    Ok(config::delete_project(&name)?.into())
+}
+
+#[tauri::command]
+pub fn restore_project(name: String) -> Result<ProjectsOutcome, AppError> {
+    applog::info("restore_project", &json!({"name": name}));
+    Ok(config::restore_project(&name)?.into())
+}
+
+/// Permanent. The only path that actually loses a project.
+#[tauri::command]
+pub fn purge_project(name: String) -> Result<ProjectsOutcome, AppError> {
+    applog::warn("purge_project (permanent)", &json!({"name": name}));
+    Ok(config::purge_project(&name)?.into())
 }
 
 /// Enumerates every AWS account + permission-set the current Org's SSO

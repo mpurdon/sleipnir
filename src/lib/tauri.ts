@@ -9,6 +9,7 @@ import type {
   EngageRequest,
   GroupedDiscovery,
   Org,
+  DeletedProject,
   Project,
 } from "./types";
 
@@ -78,7 +79,18 @@ export const deleteAccount = (alias: string) => invoke<Account[]>("delete_accoun
 
 export const listProjects = () => invoke<Project[]>("list_projects");
 export const saveProject = (project: Project) => invoke<Project[]>("save_project", { project });
-export const deleteProject = (name: string) => invoke<Project[]>("delete_project", { name });
+/** Both halves of the projects view, so a mutation never needs a re-fetch. */
+export interface ProjectsOutcome {
+  projects: Project[];
+  deleted: DeletedProject[];
+}
+
+/** Soft-delete: the project moves to the archive and can be restored. */
+export const deleteProject = (name: string) => invoke<ProjectsOutcome>("delete_project", { name });
+export const restoreProject = (name: string) => invoke<ProjectsOutcome>("restore_project", { name });
+/** Permanent — the only call that actually loses a project. */
+export const purgeProject = (name: string) => invoke<ProjectsOutcome>("purge_project", { name });
+export const listDeletedProjects = () => invoke<DeletedProject[]>("list_deleted_projects");
 
 export const discoverAccounts = (orgName: string) =>
   invoke<DiscoveredAccount[]>("discover_accounts", { orgName });

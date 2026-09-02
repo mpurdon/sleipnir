@@ -13,6 +13,7 @@ export function ProjectPanel({
   accounts,
   state,
   onUpdate,
+  onDelete,
   onBack,
 }: {
   project: Project;
@@ -20,12 +21,16 @@ export function ProjectPanel({
   state: AppState;
   /** Persists the edited project (same upsert as creation). */
   onUpdate: (p: Project) => Promise<void> | void;
+  /** Soft-delete — the project is archived and restorable, which is why this
+   * confirms in place rather than with a dire modal. */
+  onDelete: (name: string) => Promise<void> | void;
   onBack: () => void;
 }) {
   const [members, setMembers] = useState<string[]>(project.members);
   const [adding, setAdding] = useState(false);
   const [addFilter, setAddFilter] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const dirty =
     members.length !== project.members.length || members.some((m, i) => project.members[i] !== m);
@@ -152,6 +157,44 @@ export function ProjectPanel({
           CANCEL
         </button>
       </div>
+
+      <SectionRule title="Danger" />
+      {confirmingDelete ? (
+        <div className="danger-confirm">
+          <span className="label" style={{ color: "var(--c-dim)", textTransform: "none" }}>
+            Delete <strong style={{ color: "var(--c-text)" }}>{project.name}</strong>? It moves to
+            RECENTLY DELETED in the projects list and can be restored. Anything currently engaged
+            through it stays engaged.
+          </span>
+          <div className="danger-actions">
+            <button
+              className="label hover-glow"
+              style={{ color: "var(--c-magenta)" }}
+              onClick={async () => {
+                await onDelete(project.name);
+                onBack();
+              }}
+            >
+              DELETE PROJECT
+            </button>
+            <button
+              className="label hover-glow"
+              style={{ color: "var(--c-dim)" }}
+              onClick={() => setConfirmingDelete(false)}
+            >
+              KEEP IT
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="label hover-glow"
+          style={{ color: "var(--c-magenta)", alignSelf: "flex-start" }}
+          onClick={() => setConfirmingDelete(true)}
+        >
+          DELETE PROJECT…
+        </button>
+      )}
     </div>
   );
 }

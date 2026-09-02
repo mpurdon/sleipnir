@@ -40,6 +40,12 @@ export interface Project {
   members: string[]; // Account.alias[]
 }
 
+/** A project in the archive — deleting is reversible. Mirrors
+ * src-tauri/src/config/schema.rs's DeletedProject. */
+export interface DeletedProject extends Project {
+  deletedAtUnixMs: number;
+}
+
 // Mirrors src-tauri/src/state.rs.
 export interface LastEngage {
   env: Env;

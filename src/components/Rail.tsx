@@ -22,7 +22,7 @@ function lampLabel(org: Org): string {
   // A dead session's label is a call to action — clicking the row starts
   // the login directly, no drawer detour.
   const msLeft = sessionMsLeft(org);
-  if (msLeft <= 0) return "LOG IN ▸";
+  if (msLeft <= 0) return "LOG IN";
   const hrs = Math.floor(msLeft / 3_600_000);
   const mins = Math.floor((msLeft % 3_600_000) / 60_000);
   return hrs > 0 ? `${hrs}H ${mins}M` : `${mins}M`;
@@ -321,6 +321,7 @@ export function Rail({
                 <span className="org-name">{org.name}</span>
                 <span className="label org-status" style={{ color }}>
                   {loggingIn && activeLoginProgress ? progressLabel(activeLoginProgress) : lampLabel(org)}
+                  {!loggingIn && !isSessionAlive(org) && <span className="chev"> ▸</span>}
                 </span>
               </button>
               <button className="org-gear hover-glow" title={`${org.name} settings`} onClick={() => onConfigureOrg(org.name)}>
@@ -342,7 +343,7 @@ export function Rail({
         >
           <span>PROJECTS</span>
           <span className="label" style={{ color: "var(--c-dim)" }}>
-            {projectCount} ▸
+            {projectCount} <span className="chev">▸</span>
           </span>
         </button>
         <button
@@ -352,7 +353,7 @@ export function Rail({
         >
           <span>SERVICES</span>
           <span className="label" style={{ color: "var(--c-dim)" }}>
-            {serviceCount} ▸
+            {serviceCount} <span className="chev">▸</span>
           </span>
         </button>
       </div>
@@ -379,7 +380,7 @@ export function Rail({
                       {group}
                     </span>
                     <span className="label" style={{ color: "var(--c-dim)" }}>
-                      {entries.length} {open ? "▾" : "▸"}
+                      {entries.length} <span className="chev">{open ? "▾" : "▸"}</span>
                     </span>
                   </button>
                   <button

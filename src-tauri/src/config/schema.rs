@@ -89,6 +89,31 @@ pub struct Project {
     pub members: Vec<String>,
 }
 
+/// A project that was deleted, kept so the deletion can be undone.
+///
+/// Fields are flattened rather than nesting a `Project`, because TOML renders
+/// a nested struct as `[deleted_projects.project]` — legible enough, but this
+/// file is meant to be hand-editable and a flat table reads better.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedProject {
+    pub name: String,
+    pub org: String,
+    #[serde(default)]
+    pub members: Vec<String>,
+    pub deleted_at_unix_ms: u64,
+}
+
+impl DeletedProject {
+    pub fn from_project(p: Project, at: u64) -> Self {
+        Self { name: p.name, org: p.org, members: p.members, deleted_at_unix_ms: at }
+    }
+
+    pub fn into_project(self) -> Project {
+        Project { name: self.name, org: self.org, members: self.members }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SleipnirConfig {
     #[serde(default)]
@@ -97,4 +122,10 @@ pub struct SleipnirConfig {
     pub accounts: Vec<Account>,
     #[serde(default)]
     pub projects: Vec<Project>,
+    /// Deleted projects, newest first. Deleting is reversible on purpose:
+    /// a project is a bundle someone assembled by hand, and losing one to a
+    /// misclick costs real work to rebuild. Nothing prunes this — an entry
+    /// leaves only when the user purges it.
+    #[serde(default)]
+    pub deleted_projects: Vec<DeletedProject>,
 }

@@ -47,6 +47,90 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* The overlay scrollbar is drawn on top of the content, not beside it, so
+     without this the rows run underneath the track and the bar sits on the
+     row's right edge. */
+  padding-right: 10px;
+}
+
+/* Thin, themed, and inset from the content. */
+.rail-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.rail-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rail-scroll::-webkit-scrollbar-thumb {
+  background: var(--c-edge);
+  border-radius: 5px;
+  /* Transparent border + background-clip keeps the visible thumb narrow
+     while leaving a comfortable hit target. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.rail-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--c-dim);
+  background-clip: content-box;
+}
+
+/* Disclosure and affordance chevrons. Sized independently of .label: at the
+   label's 10.5px they read as punctuation rather than as a control. */
+.chev {
+  font-size: 21px;
+  line-height: 1;
+  vertical-align: -0.15em;
+  letter-spacing: 0;
+}
+
+/* Deleted-project archive in the projects drawer. */
+.deleted-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.deleted-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+.deleted-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.deleted-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-dim);
+}
+
+.danger-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.danger-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.danger-actions button {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 0;
 }
 
 .has-drawer .rail {
