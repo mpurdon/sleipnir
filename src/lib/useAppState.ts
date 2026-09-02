@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppState, RetainedProfile } from "./types";
-import { disengage, disengageAll, getState, setPin } from "./tauri";
+import { attachEngagedToProject, disengage, disengageAll, getState, setPin } from "./tauri";
 import { formatError } from "./errors";
 
 const EMPTY: AppState = { pins: [], lastEngage: {}, engaged: {} };
@@ -39,6 +39,14 @@ export function useAppState() {
     }
   }, []);
 
+  const attachToProject = useCallback(async (alias: string, project: string) => {
+    try {
+      setState(await attachEngagedToProject(alias, project));
+    } catch (e) {
+      setError(`Could not add "${alias}" to ${project}: ${formatError(e)}`);
+    }
+  }, []);
+
   const disengageEverything = useCallback(async () => {
     try {
       setRetained([]);
@@ -54,6 +62,7 @@ export function useAppState() {
     togglePin,
     disengageProfiles,
     disengageEverything,
+    attachToProject,
     retained,
     clearRetained: () => setRetained([]),
     error,

@@ -243,6 +243,7 @@ export function Rail({
   onDisengageAll,
   retained,
   onClearRetained,
+  onAddToProject,
 }: {
   /** `tauri dev` build — badge the header so a dev window is never mistaken
    * for the installed app. */
@@ -274,10 +275,18 @@ export function Rail({
   /** Profiles a disengage left alone because another holder still needs them. */
   retained: RetainedProfile[];
   onClearRetained: () => void;
+  /** Drop a standalone engaged service onto a project group to add it —
+   * the moment you realise it belongs there is the moment it is easiest
+   * to say so. */
+  onAddToProject: (alias: string, project: string) => void;
 }) {
   // Tick so countdowns/lamps stay honest.
   const [, setTick] = useState(0);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  /** Group currently under a dragged chip. Held in state rather than read
+   * from the event so the whole target can light up, not just the row the
+   * pointer happens to be over. */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(id);
@@ -430,7 +439,29 @@ export function Rail({
             const open = openGroups.has(group);
             const anyPrd = entries.some(([, e]) => e.env === "prd");
             return (
-              <Slab key={group} cut={5} tint={anyPrd ? "var(--c-magenta)" : "var(--c-lime)"} className="rail-group">
+              // Wrapped rather than putting the handlers on Slab: Slab is a
+              // theme primitive and widening it for one interaction would
+              // spread drag concerns into every panel that uses it.
+              <div
+                key={group}
+                className={`rail-drop-zone${dropTarget === group ? " rail-drop-zone-active" : ""}`}
+                onDragOver={(e) => {
+                  // preventDefault is what makes this a valid drop target at
+                  // all; without it the browser refuses the drop outright.
+                  if (!e.dataTransfer.types.includes("text/plain")) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                  setDropTarget(group);
+                }}
+                onDragLeave={() => setDropTarget((g) => (g === group ? null : g))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDropTarget(null);
+                  const alias = e.dataTransfer.getData("text/plain");
+                  if (alias) onAddToProject(alias, group);
+                }}
+              >
+              <Slab cut={5} tint={anyPrd ? "var(--c-magenta)" : "var(--c-lime)"} className="rail-group">
                 <div className="rail-group-head">
                   <button className="rail-group-toggle hover-glow" onClick={() => toggleGroup(group)}>
                     <span className="label" style={{ color: anyPrd ? "var(--c-magenta)" : "var(--c-lime)" }}>
@@ -455,6 +486,7 @@ export function Rail({
                       <EngagedChip key={alias} alias={alias} entry={e} onDisengage={() => onDisengage([alias], group)} />
                     ))}
               </Slab>
+              </div>
             );
           })}
           {adhoc.map(([alias, e]) => (
@@ -462,9 +494,19 @@ export function Rail({
               key={alias}
               cut={5}
               tint={e.env === "prd" ? "var(--c-magenta)" : "var(--c-edge)"}
-              className="rail-group"
+              className="rail-group rail-group-draggable"
             >
-              <EngagedChip alias={alias} entry={e} onDisengage={() => onDisengage([alias])} />
+              <div
+                draggable
+                title={`Drag ${alias} onto a project to add it`}
+                onDragStart={(ev) => {
+                  ev.dataTransfer.setData("text/plain", alias);
+                  ev.dataTransfer.effectAllowed = "copy";
+                }}
+                onDragEnd={() => setDropTarget(null)}
+              >
+                <EngagedChip alias={alias} entry={e} onDisengage={() => onDisengage([alias])} />
+              </div>
             </Slab>
           ))}
         </div>

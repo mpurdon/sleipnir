@@ -103,6 +103,7 @@ pub fn run() {
             commands::engage,
             commands::disengage,
             commands::disengage_all,
+            commands::attach_engaged_to_project,
             commands::refresh_engaged_credentials,
             commands::is_dev_build,
             commands::app_paths,

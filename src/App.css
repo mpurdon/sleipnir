@@ -86,6 +86,27 @@
 }
 
 /* Deleted-project archive in the projects drawer. */
+/* Drop target for dragging a standalone engaged service onto a project. */
+.rail-drop-zone {
+  border: 1px dashed transparent;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.rail-drop-zone-active {
+  border-color: var(--c-cyan);
+  background: rgba(143, 199, 216, 0.08);
+}
+
+/* The grab affordance only appears on hover: a permanent grab cursor over
+   every standalone chip would suggest the whole rail is rearrangeable. */
+.rail-group-draggable [draggable="true"] {
+  cursor: grab;
+}
+
+.rail-group-draggable [draggable="true"]:active {
+  cursor: grabbing;
+}
+
 /* A profile held by more than one project (or a project plus a direct
    engage). Marked because disengaging it will not do what the button
    appears to promise. */

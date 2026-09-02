@@ -109,5 +109,13 @@ there. The split lives in `src-tauri/src/paths.rs`.
 ## Status
 
 Early but daily-driven. Signed and notarized, with tag-driven releases
-that publish to the Homebrew tap automatically. Roadmap: universal
-(Intel) builds, Windows packaging.
+that publish to the Homebrew tap automatically.
+
+Roadmap:
+
+- Universal (Intel) builds; Windows packaging.
+- Drag one standalone engaged service onto another to create a project from
+  the pair. Dragging a standalone onto an *existing* project already works.
+- Per-environment profile names, so one service can be engaged at two
+  environments at once. Today a profile is one name holding one set of
+  keys, so `global-event-bus` is DEV or PRD, never both.

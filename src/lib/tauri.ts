@@ -148,6 +148,10 @@ export const engage = (request: EngageRequest) => invoke<EngageOutcome>("engage"
 export const disengage = (profiles: string[], project?: string) =>
   invoke<DisengageOutcome>("disengage", { profiles, project: project ?? null });
 export const disengageAll = () => invoke<AppState>("disengage_all");
+/** Makes `project` a holder of an already-engaged profile, so it moves into
+ * that group and gains the same shared-hold protection as any member. */
+export const attachEngagedToProject = (alias: string, project: string) =>
+  invoke<AppState>("attach_engaged_to_project", { alias, project });
 /** Rotates static ~/.aws/credentials keys for engaged profiles nearing
  * expiry; returns how many were refreshed. */
 export const refreshEngagedCredentials = () => invoke<number>("refresh_engaged_credentials");

@@ -374,6 +374,26 @@ pub fn disengage(profiles: Vec<String>, project: Option<String>) -> Result<Disen
     Ok(DisengageOutcome { state: st, retained })
 }
 
+/// Attaches an already-engaged profile to a project.
+///
+/// The counterpart to dragging a standalone service onto a project group:
+/// the project becomes a holder, so the profile moves into that group and
+/// gains the same protection as any other member — releasing one holder no
+/// longer strips it. Membership in `config.toml` is the caller's job; this
+/// only concerns the live engagement.
+#[tauri::command]
+pub fn attach_engaged_to_project(alias: String, project: String) -> Result<state::AppState, AppError> {
+    let mut st = state::load();
+    let Some(entry) = st.engaged.get_mut(&alias) else {
+        return Err(AppError::Invalid(format!("{alias} is not currently engaged")));
+    };
+    entry.add_holder(Some(&project));
+    entry.project = Some(project.clone());
+    state::save(&st)?;
+    applog::info("attached engaged profile to project", &json!({"alias": alias, "project": project}));
+    Ok(st)
+}
+
 #[tauri::command]
 pub fn disengage_all() -> Result<state::AppState, AppError> {
     let mut st = state::load();

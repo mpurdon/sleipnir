@@ -74,6 +74,7 @@ export function App() {
     disengageEverything,
     retained,
     clearRetained,
+    attachToProject,
     error: stateError,
     clearError: clearStateError,
   } = useAppState();
@@ -235,6 +236,17 @@ export function App() {
         }}
         onDisengage={disengageProfiles}
         onDisengageAll={disengageEverything}
+        onAddToProject={(alias, projectName) => {
+          // Two halves, and both matter: membership so future engages of the
+          // project include it, and a holder on the live engagement so it
+          // moves into the group now rather than after the next engage — a
+          // drag that appeared to do nothing would read as broken.
+          const project = projects.find((p) => p.name === projectName);
+          if (project && !project.members.includes(alias)) {
+            void upsertProject({ ...project, members: [...project.members, alias] });
+          }
+          void attachToProject(alias, projectName);
+        }}
         retained={retained}
         onClearRetained={clearRetained}
       />

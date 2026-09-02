@@ -95,7 +95,8 @@ app grants itself.
 Press the disconnect icon beside a profile, a project group, or
 **DISENGAGE ALL**.
 
-Disengaging:
+Disengaging releases *your* hold on the profile. When that was the last
+hold, it also:
 
 - removes the profile from the engaged map in `state.json`
 - deletes its cached role credentials
@@ -105,20 +106,41 @@ That last one is the point. With static-key delivery, disengage means the
 secrets are *gone* from disk, not merely refused by a helper. A script that
 runs after you disengage finds no credentials, because there are none.
 
+If something else still holds the profile — another project, or a direct
+engage — the keys stay and Sleipnir tells you so rather than pulling them
+out from under work you did not mention. See [Shared
+services](#shared-services) below.
+
 The `~/.aws/config` stanza stays, carrying only the region. It holds no
 secret, and keeping it means your profile names remain stable across
 engage cycles.
 
-## Repointing and collisions
+## Shared services
 
-One AWS profile can hold one set of keys. Engaging a service that is
-already engaged elsewhere — at a different environment, or as part of
-another project — repoints it rather than duplicating it.
+One AWS profile holds one set of keys, so two projects that both include a
+service — readonly on a shared event bus, say — share a single engagement
+rather than getting one each.
+
+Sleipnir tracks who is relying on it. A profile held by more than one thing
+shows a **×N** badge whose tooltip names them, and **disengaging one holder
+does not strip the keys** while another still needs them. You get a note
+saying what was kept and who is still using it. The credentials are removed
+only when the last holder lets go.
+
+That covers services wanted at the *same* environment and mode, which is
+the common case. Two projects wanting the *same* service at *different*
+environments is a genuine conflict — there is one profile, and it can point
+at one account at a time. See below.
+
+## Repointing
+
+Engaging a service at a different environment or mode than it currently
+holds repoints it: the same profile, different account.
 
 Because that has side effects on work you may have in flight, Sleipnir
-warns before repointing a profile that another project is currently using.
-Re-engaging a service from its own row skips the warning: the only thing it
-can collide with is itself.
+warns first, naming what the profile is currently set to and which project
+put it there. Re-engaging a service from its own row skips the warning —
+the only thing it can collide with is itself.
 
 ## Partial failure
 

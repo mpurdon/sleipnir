@@ -87,6 +87,17 @@ Restoring refuses if you have since created a new project under the same
 name — an undo that silently replaced your current work with an older copy
 would be worse than no undo at all. Rename one of them first.
 
+## Adding a service by dragging
+
+A service you engaged on its own appears in the rail as its own block. Drag
+it onto a project's group to add it there — the moment you realise it
+belongs to that project is the moment it is easiest to say so.
+
+The drop does two things: adds the service to the project's membership, so
+future engages of the project include it, and attaches the live engagement
+to the project, so it moves into that group immediately rather than after
+the next engage.
+
 ## Pinning
 
 The ★ pins a project to the top of the list. Unpinned projects sort by how
