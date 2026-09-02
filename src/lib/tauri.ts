@@ -67,10 +67,16 @@ export type LoginProgress =
   | { stage: "registering" }
   | { stage: "awaitingBrowserApproval"; verificationUriComplete: string; userCode: string }
   | { stage: "polling"; verificationUriComplete: string; userCode: string }
-  | { stage: "done" };
+  | { stage: "done" }
+  | { stage: "failed"; message: string };
 
-export function onLoginProgress(cb: (p: LoginProgress) => void): Promise<() => void> {
-  return listen<LoginProgress>("sso:login-progress", (e) => cb(e.payload));
+/** The wire shape: the org rides flattened alongside the stage, because a
+ * login is not always started by the user clicking an org — engage and scan
+ * chain one in the backend. */
+export type LoginProgressEvent = LoginProgress & { org: string };
+
+export function onLoginProgress(cb: (p: LoginProgressEvent) => void): Promise<() => void> {
+  return listen<LoginProgressEvent>("sso:login-progress", (e) => cb(e.payload));
 }
 
 export const listAccounts = () => invoke<Account[]>("list_accounts");

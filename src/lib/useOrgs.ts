@@ -40,7 +40,19 @@ export function useOrgs() {
       .catch((e) => setError(`Failed to load Orgs: ${formatError(e)}`))
       .finally(() => setLoaded(true));
 
-    onLoginProgress((p) => setActiveLoginProgress(p)).then((u) => {
+    // Drive the approval overlay from the event stream rather than from our
+    // own login() call. engage and scan chain a login in the backend, and
+    // keying off login() meant those flows showed no approval code at all —
+    // the user was told to compare a code the app never displayed.
+    onLoginProgress((p) => {
+      if (p.stage === "done" || p.stage === "failed") {
+        setActiveLoginName(null);
+        setActiveLoginProgress(null);
+        return;
+      }
+      setActiveLoginName(p.org);
+      setActiveLoginProgress(p);
+    }).then((u) => {
       unlisten.current = u;
     });
 

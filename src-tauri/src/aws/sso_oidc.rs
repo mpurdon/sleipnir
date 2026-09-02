@@ -69,6 +69,26 @@ pub enum LoginProgress {
         user_code: String,
     },
     Done,
+    /// Terminal, and the reason the frontend can trust this stream to end:
+    /// login() has many error exits, and without one of these an approval
+    /// overlay opened by a backend-chained login would hang forever after a
+    /// failure nobody told it about.
+    Failed {
+        message: String,
+    },
+}
+
+/// What actually goes on the wire.
+///
+/// The org name rides along because a login is not always started by the
+/// user clicking an org: engage and scan both chain one in the backend, and
+/// a UI that learned the org only from its own `login()` call showed nothing
+/// at all in those cases — the approval code included.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoginProgressEvent<'a> {
+    pub org: &'a str,
+    #[serde(flatten)]
+    pub progress: LoginProgress,
 }
 
 /// Set by the `cancel_login` command to break a device-auth poll out of its
@@ -164,10 +184,25 @@ async fn get_or_register_client(org: &OrgConfig) -> Result<kr::ClientRegistratio
 /// one is silently refreshed via a cached refresh token when one exists —
 /// only the remaining case (no refresh token, or the refresh itself fails,
 /// e.g. it's past its own ~90-day lifetime) needs the browser.
+pub fn emit_progress(app: &AppHandle, org: &str, progress: LoginProgress) {
+    let _ = app.emit("sso:login-progress", &LoginProgressEvent { org, progress });
+}
+
+/// Runs a login, guaranteeing the progress stream terminates.
+///
+/// Every error path inside `login_inner` returns early; funnelling them
+/// through here is what makes `Failed` unmissable, rather than relying on
+/// each `return Err` to remember to emit.
 pub async fn login(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, LoginError> {
-    let emit = |progress: LoginProgress| {
-        let _ = app.emit("sso:login-progress", &progress);
-    };
+    let result = login_inner(app, org).await;
+    if let Err(e) = &result {
+        emit_progress(app, &org.name, LoginProgress::Failed { message: e.to_string() });
+    }
+    result
+}
+
+async fn login_inner(app: &AppHandle, org: &OrgConfig) -> Result<CachedToken, LoginError> {
+    let emit = |progress: LoginProgress| emit_progress(app, &org.name, progress);
 
     // Valid cached token or headless refresh — no browser, no user action.
     if let Some(cached) = ensure_fresh_token(org).await {
@@ -458,6 +493,44 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    /// `flatten` over an internally-tagged enum is exactly the shape that
+    /// broke silently last time, so assert the wire format the frontend
+    /// actually reads: org alongside stage, not nested under it.
+    #[test]
+    fn the_event_carries_the_org_beside_the_stage() {
+        let ev = LoginProgressEvent {
+            org: "acme",
+            progress: LoginProgress::AwaitingBrowserApproval {
+                verification_uri_complete: "https://example/x".into(),
+                user_code: "ABCD-EFGH".into(),
+            },
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains(r#""org":"acme""#), "missing org in {json}");
+        assert!(json.contains(r#""stage":"awaitingBrowserApproval""#), "missing stage in {json}");
+        assert!(json.contains(r#""userCode":"ABCD-EFGH""#), "missing userCode in {json}");
+        assert!(!json.contains("progress"), "payload must be flat, got {json}");
+    }
+
+    /// Both terminal stages must be distinguishable, because the UI clears
+    /// its approval overlay on either and would otherwise hang.
+    #[test]
+    fn terminal_stages_serialise_distinctly() {
+        let done = serde_json::to_string(&LoginProgressEvent {
+            org: "acme",
+            progress: LoginProgress::Done,
+        })
+        .unwrap();
+        let failed = serde_json::to_string(&LoginProgressEvent {
+            org: "acme",
+            progress: LoginProgress::Failed { message: "nope".into() },
+        })
+        .unwrap();
+        assert!(done.contains(r#""stage":"done""#), "{done}");
+        assert!(failed.contains(r#""stage":"failed""#), "{failed}");
+        assert!(failed.contains(r#""message":"nope""#), "{failed}");
+    }
+
     /// The frontend reads these payloads as `userCode` and
     /// `verificationUriComplete`. Nothing else checks that the wire format
     /// matches the TypeScript type, and when it did not, the failure was

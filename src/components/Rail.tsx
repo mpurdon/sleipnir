@@ -43,6 +43,8 @@ function progressLabel(p: LoginProgress): string {
       return p.userCode ? `⧉ ${p.userCode}` : "APPROVE IN BROWSER…";
     case "done":
       return "DONE";
+    case "failed":
+      return "LOGIN FAILED";
   }
 }
 
