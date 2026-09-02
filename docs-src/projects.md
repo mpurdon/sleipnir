@@ -54,9 +54,38 @@ before you make it.
 
 ## Editing membership
 
-**✎ EDIT SERVICES** opens the project so you can add or remove members.
-Changes take effect on the next engage; services already engaged from a
+**⚙ SETTINGS** on the project card opens its membership list, where you can
+add or remove services. Changes save as you make them.
+
+They take effect on the next engage; services already engaged from a
 previous run stay engaged until you disengage them.
+
+Deleting the project lives at the bottom of the same panel — see
+[Deleting a project](#deleting-a-project) below.
+
+## Deleting a project
+
+**DELETE PROJECT…** at the bottom of the settings panel. It asks once, then
+removes the project from the list.
+
+Deleting is reversible. The project moves to **RECENTLY DELETED** at the
+bottom of the projects list, where **↩ RESTORE** brings it back with its
+members intact. A project is a bundle you assembled by hand, so losing one
+to a misclick would cost real work to rebuild.
+
+> [!NOTE]
+> Deleting does **not** disengage. Profiles engaged through the project are
+> live credentials on your machine, and tearing them down as a side effect
+> of tidying up a bundle would be a much larger action than the one you
+> asked for. Disengage them from the rail if that is what you want.
+
+**DELETE FOREVER** in the recently-deleted list purges the archive entry.
+That one is permanent, and it is the only action here that actually loses
+anything.
+
+Restoring refuses if you have since created a new project under the same
+name — an undo that silently replaced your current work with an older copy
+would be worse than no undo at all. Rename one of them first.
 
 ## Pinning
 

@@ -86,6 +86,20 @@
 }
 
 /* Deleted-project archive in the projects drawer. */
+/* The single exit from project settings. Separated from the danger zone
+   above it so CLOSE is never a neighbour of DELETE by accident. */
+.project-close {
+  margin-top: 22px;
+  background: none;
+  border: 1px solid var(--c-edge);
+  color: var(--c-dim);
+}
+
+.project-close:hover {
+  border-color: var(--c-cyan);
+  color: var(--c-cyan);
+}
+
 /* Which role an engage will actually use, and the picker for saying so
    explicitly when the naming heuristic cannot tell. */
 .role-line {

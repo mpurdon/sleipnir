@@ -4,9 +4,15 @@ import { accountName, ENV_LABELS, MODES, sortEnvs } from "../lib/constants";
 import { SectionRule, Slab } from "../theme";
 
 /**
- * Project EDIT view: membership changes are a local draft until SAVE —
- * CANCEL (or the back link) discards. Engaging lives on the project card,
- * not here.
+ * Project settings: membership, and deleting the project. Engaging lives on
+ * the project card, not here.
+ *
+ * Membership changes persist as they are made. The panel used to hold them
+ * as a draft behind SAVE/CANCEL, which meant a change could be lost by
+ * leaving via the back link — and once deleting a project moved in here,
+ * "settings you must remember to save" sat oddly beside an action that
+ * takes effect at once. Local state still updates first so the list responds
+ * instantly; the write follows.
  */
 export function ProjectPanel({
   project,
@@ -29,11 +35,14 @@ export function ProjectPanel({
   const [members, setMembers] = useState<string[]>(project.members);
   const [adding, setAdding] = useState(false);
   const [addFilter, setAddFilter] = useState("");
-  const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const dirty =
-    members.length !== project.members.length || members.some((m, i) => project.members[i] !== m);
+  /** Optimistic locally, persisted immediately. A failed write surfaces as
+   * an error banner from the config layer rather than silently diverging. */
+  function setMembersAndSave(next: string[]) {
+    setMembers(next);
+    void onUpdate({ ...project, members: next });
+  }
 
   const last = state.lastEngage[`project:${project.name}`];
   const lastLabel = last
@@ -53,17 +62,6 @@ export function ProjectPanel({
         (q === "" || a.alias.includes(q) || accountName(a).toLowerCase().includes(q)),
     )
     .sort((a, b) => accountName(a).localeCompare(accountName(b)));
-
-  async function save() {
-    if (!dirty || saving) return;
-    setSaving(true);
-    try {
-      await onUpdate({ ...project, members });
-      onBack();
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="project-panel">
@@ -94,7 +92,7 @@ export function ProjectPanel({
             <button
               className="member-remove hover-glow"
               title={`Remove ${a.alias} from ${project.name}`}
-              onClick={() => setMembers((prev) => prev.filter((m) => m !== a.alias))}
+              onClick={() => setMembersAndSave(members.filter((m) => m !== a.alias))}
             >
               ✕
             </button>
@@ -127,7 +125,7 @@ export function ProjectPanel({
                 key={a.alias}
                 className="checkbox-row hover-glow"
                 title={`Add ${a.alias} to ${project.name}`}
-                onClick={() => setMembers((prev) => [...prev, a.alias])}
+                onClick={() => setMembersAndSave([...members, a.alias])}
               >
                 <span className="label" style={{ color: "var(--c-cyan)" }}>
                   +
@@ -143,20 +141,6 @@ export function ProjectPanel({
           + ADD SERVICES
         </button>
       )}
-
-      <div className="engage-actions">
-        <button
-          className="engage-btn hover-glow"
-          style={{ background: "var(--c-cyan)", color: "var(--c-void)" }}
-          disabled={!dirty || saving}
-          onClick={() => void save()}
-        >
-          {saving ? "SAVING…" : "SAVE"}
-        </button>
-        <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={onBack}>
-          CANCEL
-        </button>
-      </div>
 
       <SectionRule title="Danger" />
       {confirmingDelete ? (
@@ -195,6 +179,10 @@ export function ProjectPanel({
           DELETE PROJECT…
         </button>
       )}
+
+      <button className="engage-btn hover-glow project-close" onClick={onBack}>
+        CLOSE
+      </button>
     </div>
   );
 }

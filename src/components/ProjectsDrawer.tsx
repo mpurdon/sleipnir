@@ -257,10 +257,10 @@ export function ProjectsDrawer({
               <button
                 className="label hover-glow card-change-link"
                 style={{ color: "var(--c-cyan)" }}
-                title="Add or remove this project's services"
+                title="Members, and deleting this project"
                 onClick={() => setView({ kind: "detail", name: p.name })}
               >
-                ✎ EDIT SERVICES
+                ⚙ SETTINGS
               </button>
             </div>
           </Slab>
