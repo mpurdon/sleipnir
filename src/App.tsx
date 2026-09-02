@@ -278,6 +278,7 @@ export function App() {
               onStateChange={onStateChangeWithOrgRefresh}
               onImported={replaceAccounts}
               onSessionMaybeRefreshed={refreshOrgs}
+              onSaveAccount={upsertAccount}
             />
           )}
 

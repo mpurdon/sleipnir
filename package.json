@@ -8,7 +8,8 @@
     "build": "bun build ./index.html --outdir=dist --minify --sourcemap=linked",
     "tauri": "tauri",
     "docs:build": "bun run scripts/build-docs.ts",
-    "docs:serve": "bun run scripts/build-docs.ts && bun run scripts/serve-docs.ts"
+    "docs:serve": "bun run scripts/build-docs.ts && bun run scripts/serve-docs.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "react": "^19",

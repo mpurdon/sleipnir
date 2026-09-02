@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Account, AppState, Env, Mode, Org } from "../lib/types";
 import { accountName, ENVS, ENV_LABELS } from "../lib/constants";
+import { availableRolesFor, resolveEngage, targetForEnv } from "../lib/roles";
 import { renameAccount } from "../lib/tauri";
 import { formatError } from "../lib/errors";
 import { useEngage } from "../lib/useEngage";
@@ -67,6 +68,7 @@ export function ServicesDrawer({
   onStateChange,
   onImported,
   onSessionMaybeRefreshed,
+  onSaveAccount,
 }: {
   org: Org;
   accounts: Account[];
@@ -76,6 +78,10 @@ export function ServicesDrawer({
   onStateChange: (s: AppState) => void;
   onImported: (accounts: Account[]) => void;
   onSessionMaybeRefreshed?: () => void;
+  /** Persists a role pick. Needed because a service whose permission sets
+   * are all custom-named has nothing the mode heuristic recognises, and
+   * without an explicit pick it can never be engaged at all. */
+  onSaveAccount: (a: Account) => void;
 }) {
   const eng = useEngage(onStateChange);
   const [filter, setFilter] = useState("");
@@ -91,6 +97,30 @@ export function ServicesDrawer({
 
   function sel(key: string): Sel {
     return sels[key] ?? defaultSel(state, key);
+  }
+
+  /**
+   * Pins a role to a mode for this service.
+   *
+   * Writes both the service-wide preference and the per-env override: the
+   * preference is what makes the mode appear in the pills at all (they are
+   * derived from `account.roles`), and the override is what wins at engage
+   * time on this specific env, where the right role can differ.
+   */
+  function pickRole(account: Account, env: Env, mode: Mode, role: string) {
+    const found = targetForEnv(account, env);
+    if (!found) return;
+    onSaveAccount({
+      ...account,
+      roles: { ...account.roles, [mode]: role },
+      environments: {
+        ...account.environments,
+        [found.env]: {
+          ...found.target,
+          roleOverrides: { ...found.target.roleOverrides, [mode]: role },
+        },
+      },
+    });
   }
 
   // First run (no accounts) or explicit re-scan → the discovery flow.
@@ -144,6 +174,10 @@ export function ServicesDrawer({
           const engaged = state.engaged[a.alias];
           const isOpen = expanded === a.alias;
           const isPrdAdmin = !standalone && s.env === "prd" && s.mode === "admin";
+          // What engage will actually resolve to, mirroring the backend, so
+          // the UI never offers a button that is certain to fail.
+          const resolution = resolveEngage(a, s.env, s.mode);
+          const rolesHere = availableRolesFor(a, s.env);
           return (
             <Slab key={a.alias} cut={4} className="catalog-row">
               <div className="catalog-row-head">
@@ -189,12 +223,55 @@ export function ServicesDrawer({
                       sel={s}
                       onChange={(v) => setSels((prev) => ({ ...prev, [key]: v }))}
                     />
+
+                    <div className="role-line">
+                      <span className="label" style={{ color: "var(--c-dim)" }}>
+                        ROLE
+                      </span>
+                      {resolution.ok ? (
+                        <span className="role-effective">
+                          {resolution.role}
+                          {resolution.fellBackFrom && (
+                            <span className="label" style={{ color: "var(--c-yellow)", marginLeft: 8 }}>
+                              ↓ {modeMeta(resolution.mode).label}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="role-effective" style={{ color: "var(--c-yellow)" }}>
+                          {resolution.reason}
+                        </span>
+                      )}
+                    </div>
+
+                    {rolesHere.length > 0 && (!resolution.ok || rolesHere.length > 1) && (
+                      <div className="role-picker">
+                        <span className="label" style={{ color: "var(--c-dim)" }}>
+                          USE FOR {modeMeta(s.mode).label}
+                        </span>
+                        {rolesHere.map((r) => {
+                          const active = resolution.ok && resolution.role === r;
+                          return (
+                            <button
+                              key={r}
+                              className="role-cell-item role-radio hover-glow"
+                              style={{ color: active ? modeMeta(s.mode).color : "var(--c-dim)" }}
+                              title={`Use ${r} when engaging ${modeMeta(s.mode).label}`}
+                              onClick={() => pickRole(a, s.env, s.mode, r)}
+                            >
+                              {active ? "◉" : "○"} {r}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     <HoldButton
                       label={standalone ? `ENGAGE ${modeMeta(s.mode).label}` : `ENGAGE ${ENV_LABELS[s.env]}/${modeMeta(s.mode).label}`}
                       holdLabel={`HOLD — ADMIN → ${ENV_LABELS[s.env]}`}
                       color={!standalone && s.env === "prd" ? "var(--c-magenta)" : modeMeta(s.mode).color}
                       requireHold={isPrdAdmin}
-                      disabled={eng.busy}
+                      disabled={eng.busy || !resolution.ok}
                       onConfirm={() =>
                         // Re-engaging THIS service from its own row is
                         // unambiguous intent — skip the repoint gate (it
