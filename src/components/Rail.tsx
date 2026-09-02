@@ -423,11 +423,16 @@ export function Rail({
         </div>
       )}
 
+      </div>
+
+      {/* Outside .rail-scroll on purpose. Inside it, `margin-top: auto` only
+          held the footer down while the content happened to fit; a short
+          window or a long org list scrolled SETTINGS off the bottom with
+          everything else. Pinned here it behaves like the header. */}
       <div className="sidebar-footer">
         <button className="settings-btn hover-glow" onClick={onOpenSettings}>
           ⚙ SETTINGS
         </button>
-      </div>
       </div>
     </aside>
   );

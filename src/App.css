@@ -1728,13 +1728,18 @@
 
 /* Sidebar footer / settings button */
 
+/* Pinned below the scroll area, so it survives a short window and a long
+   org list alike. `flex: none` keeps it from being squeezed when the rail
+   runs out of room — the one thing that must never scroll away is the way
+   back into settings. */
 .sidebar-footer {
-  margin-top: auto;
-  /* A row, and the primary control flexes rather than claiming 100% — a
-     sibling used to have nowhere to go but the next line. */
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
+  padding-right: 10px;
+  border-top: 1px solid var(--c-edge);
+  padding-top: 8px;
 }
 
 .settings-btn {
