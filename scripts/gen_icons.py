@@ -12,7 +12,7 @@ src = Image.open(ICONS / "app-icon-source.png").convert("RGBA")
 
 # Plain PNGs referenced directly in tauri.conf.json's bundle.icon list.
 for name, size in [("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256)]:
-    src.resize((size, size), Image.LANCZOS).save(ICONS / name)
+    src.resize((size, size), Image.Resampling.LANCZOS).save(ICONS / name)
 
 # icon.ico (Windows) — Pillow writes a proper multi-resolution ICO.
 src.save(ICONS / "icon.ico", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
@@ -23,9 +23,9 @@ with tempfile.TemporaryDirectory() as tmp:
     iconset = Path(tmp) / "icon.iconset"
     iconset.mkdir()
     for size in iconset_sizes:
-        src.resize((size, size), Image.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
+        src.resize((size, size), Image.Resampling.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
         if size <= 512:
-            src.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
+            src.resize((size * 2, size * 2), Image.Resampling.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
     subprocess.run(["iconutil", "-c", "icns", "-o", str(ICONS / "icon.icns"), str(iconset)], check=True)
 
 print("wrote 32x32.png, 128x128.png, 128x128@2x.png, icon.ico, icon.icns")

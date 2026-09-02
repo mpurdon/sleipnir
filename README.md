@@ -85,6 +85,11 @@ cargo test            # run from src-tauri/ — includes the discovery
 bun run docs:serve    # help site at http://127.0.0.1:4318
 ```
 
+The app icon is generated from `src-tauri/icons/app-icon-source.png` by
+`scripts/gen_icons.py`. Check a candidate against the macOS grid and see it
+at every size it will actually be rendered at — 16px included — with
+`python3 scripts/check_icon.py <file>` before regenerating.
+
 The help site is Markdown in `docs-src/`, built by `scripts/build-docs.ts`
 and deployed to GitHub Pages on push. In-app tours live in `src/tour/`.
 

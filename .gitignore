@@ -5,3 +5,6 @@ src-tauri/target/
 *.log
 src-tauri/gen/schemas/
 site/
+
+# Contact sheets from scripts/check_icon.py
+*-contact.png
