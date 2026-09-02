@@ -303,20 +303,75 @@ fn strip_static_keys(profiles: &[String]) {
     let _ = aws_config_editor::remove_profiles_keys(AwsFile::Credentials, &refs, &engage::STATIC_CRED_KEYS);
 }
 
-/// Stand-down: removes profiles from the engaged map, deletes their cached
-/// role credentials, and strips the static keys out of
-/// `~/.aws/credentials`. The `~/.aws/config` stanza (region) stays.
+/// A profile left engaged because something else still needs it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetainedProfile {
+    pub alias: String,
+    /// Project names, and "a direct engage" for a non-project hold.
+    pub held_by: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisengageOutcome {
+    pub state: state::AppState,
+    /// Not an error — the caller's hold was released, but the keys stay
+    /// because another holder is still using them. Surfaced so a chip that
+    /// does not vanish reads as deliberate rather than as a failed click.
+    pub retained: Vec<RetainedProfile>,
+}
+
+/// Releases one holder's claim on each profile.
+///
+/// `project` names the holder being released; `None` means the direct,
+/// non-project engage. Keys are stripped only when the last holder lets go —
+/// two projects sharing a service share one AWS profile, and disengaging one
+/// of them used to pull the credentials out from under the other silently.
+/// Decides what a disengage frees and what it keeps, without touching disk.
+///
+/// Split out because it is the decision that determines whether credentials
+/// are stripped from `~/.aws/credentials`, and the command around it reads
+/// and writes the user's real state file — not somewhere a test should go.
+pub fn plan_disengage(
+    engaged: &mut std::collections::HashMap<String, state::EngagedProfile>,
+    profiles: &[String],
+    project: Option<&str>,
+) -> (Vec<String>, Vec<RetainedProfile>) {
+    let mut freed = Vec::new();
+    let mut retained = Vec::new();
+    for p in profiles {
+        let Some(entry) = engaged.get_mut(p) else { continue };
+        if entry.release_holder(project) {
+            freed.push(p.clone());
+        } else {
+            retained.push(RetainedProfile { alias: p.clone(), held_by: entry.holder_labels() });
+        }
+    }
+    (freed, retained)
+}
+
 #[tauri::command]
-pub fn disengage(profiles: Vec<String>) -> Result<state::AppState, AppError> {
+pub fn disengage(profiles: Vec<String>, project: Option<String>) -> Result<DisengageOutcome, AppError> {
     let mut st = state::load();
-    for p in &profiles {
+    let (freed, retained) = plan_disengage(&mut st.engaged, &profiles, project.as_deref());
+
+    for p in &freed {
         st.engaged.remove(p);
         let _ = creds_cache::delete(p);
     }
-    strip_static_keys(&profiles);
+    strip_static_keys(&freed);
     state::save(&st)?;
-    applog::info(format!("disengaged {} profile(s)", profiles.len()), &json!({"profiles": profiles}));
-    Ok(st)
+
+    applog::info(
+        format!("disengaged {} profile(s), {} retained", freed.len(), retained.len()),
+        &json!({
+            "released": freed,
+            "holder": project,
+            "retained": retained.iter().map(|r| r.alias.as_str()).collect::<Vec<_>>(),
+        }),
+    );
+    Ok(DisengageOutcome { state: st, retained })
 }
 
 #[tauri::command]
@@ -550,4 +605,102 @@ pub fn read_logs(app: AppHandle, max_lines: Option<usize>) -> Result<String, App
     let lines: Vec<&str> = contents.lines().collect();
     let start = lines.len().saturating_sub(max_lines);
     Ok(lines[start..].join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Env, Mode};
+    use std::collections::HashMap;
+
+    fn held(holders: &[Option<&str>]) -> state::EngagedProfile {
+        let mut e = state::EngagedProfile {
+            org: "acme".into(),
+            env: Env::Dev,
+            mode: Mode::ReadOnly,
+            account_id: "1".into(),
+            role_name: "ReadOnlyAccess".into(),
+            region: "us-east-1".into(),
+            project: holders.first().copied().flatten().map(str::to_string),
+            held_by_projects: Vec::new(),
+            held_adhoc: false,
+            engaged_at_unix_ms: 0,
+        };
+        for h in holders {
+            e.add_holder(*h);
+        }
+        e
+    }
+
+    fn map(pairs: Vec<(&str, state::EngagedProfile)>) -> HashMap<String, state::EngagedProfile> {
+        pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    /// The case that motivated all of this: readonly on a shared bus, used by
+    /// two projects. Disengaging one must not strip the other's credentials.
+    #[test]
+    fn a_shared_profile_is_kept_when_one_project_lets_go() {
+        let mut engaged = map(vec![
+            ("global-event-bus", held(&[Some("alpha"), Some("beta")])),
+            ("only-alpha", held(&[Some("alpha")])),
+        ]);
+        let (freed, retained) = plan_disengage(
+            &mut engaged,
+            &["global-event-bus".into(), "only-alpha".into()],
+            Some("alpha"),
+        );
+
+        assert_eq!(freed, ["only-alpha"], "only the unshared profile is stripped");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].alias, "global-event-bus");
+        assert_eq!(retained[0].held_by, ["beta"], "and the user is told who still needs it");
+    }
+
+    /// A project and a direct engage on the same profile count separately.
+    #[test]
+    fn a_direct_engage_keeps_a_profile_alive_after_the_project_goes() {
+        let mut engaged = map(vec![("bus", held(&[Some("alpha"), None]))]);
+        let (freed, retained) = plan_disengage(&mut engaged, &["bus".into()], Some("alpha"));
+        assert!(freed.is_empty());
+        assert_eq!(retained[0].held_by, ["a direct engage"]);
+
+        // And releasing the direct hold then frees it.
+        let (freed, _) = plan_disengage(&mut engaged, &["bus".into()], None);
+        assert_eq!(freed, ["bus"]);
+    }
+
+    #[test]
+    fn the_last_holder_frees_the_profile() {
+        let mut engaged = map(vec![("bus", held(&[Some("alpha")]))]);
+        let (freed, retained) = plan_disengage(&mut engaged, &["bus".into()], Some("alpha"));
+        assert_eq!(freed, ["bus"]);
+        assert!(retained.is_empty());
+    }
+
+    /// Releasing a project that never held the profile must not free it —
+    /// otherwise a stale group could strip a live profile.
+    #[test]
+    fn releasing_an_unrelated_project_frees_nothing() {
+        let mut engaged = map(vec![("bus", held(&[Some("alpha")]))]);
+        let (freed, retained) = plan_disengage(&mut engaged, &["bus".into()], Some("ghost"));
+        assert!(freed.is_empty(), "must not strip a profile alpha still holds");
+        assert_eq!(retained[0].held_by, ["alpha"]);
+    }
+
+    #[test]
+    fn a_profile_that_is_not_engaged_is_skipped() {
+        let mut engaged = map(vec![]);
+        let (freed, retained) = plan_disengage(&mut engaged, &["ghost".into()], Some("alpha"));
+        assert!(freed.is_empty());
+        assert!(retained.is_empty());
+    }
+
+    /// Attribution must follow the surviving holder, or the rail would keep
+    /// grouping the profile under a project that has released it.
+    #[test]
+    fn attribution_moves_to_the_remaining_holder() {
+        let mut engaged = map(vec![("bus", held(&[Some("alpha"), Some("beta")]))]);
+        plan_disengage(&mut engaged, &["bus".into()], Some("alpha"));
+        assert_eq!(engaged["bus"].project.as_deref(), Some("beta"));
+    }
 }

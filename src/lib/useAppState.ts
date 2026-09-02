@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AppState } from "./types";
+import type { AppState, RetainedProfile } from "./types";
 import { disengage, disengageAll, getState, setPin } from "./tauri";
 import { formatError } from "./errors";
 
@@ -10,6 +10,10 @@ const EMPTY: AppState = { pins: [], lastEngage: {}, engaged: {} };
 export function useAppState() {
   const [state, setState] = useState<AppState>(EMPTY);
   const [error, setError] = useState<string | null>(null);
+  /** Profiles a disengage deliberately left alone because another holder
+   * still needs them. Shown briefly so a chip that does not disappear reads
+   * as intended rather than as a click that failed. */
+  const [retained, setRetained] = useState<RetainedProfile[]>([]);
 
   useEffect(() => {
     getState()
@@ -25,9 +29,11 @@ export function useAppState() {
     }
   }, []);
 
-  const disengageProfiles = useCallback(async (profiles: string[]) => {
+  const disengageProfiles = useCallback(async (profiles: string[], project?: string) => {
     try {
-      setState(await disengage(profiles));
+      const out = await disengage(profiles, project);
+      setState(out.state);
+      setRetained(out.retained);
     } catch (e) {
       setError(`Failed to disengage: ${formatError(e)}`);
     }
@@ -35,6 +41,7 @@ export function useAppState() {
 
   const disengageEverything = useCallback(async () => {
     try {
+      setRetained([]);
       setState(await disengageAll());
     } catch (e) {
       setError(`Failed to disengage all: ${formatError(e)}`);
@@ -47,6 +54,8 @@ export function useAppState() {
     togglePin,
     disengageProfiles,
     disengageEverything,
+    retained,
+    clearRetained: () => setRetained([]),
     error,
     clearError: () => setError(null),
   };

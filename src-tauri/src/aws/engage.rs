@@ -484,22 +484,27 @@ pub async fn engage(
                     keys: vec![("region".to_string(), target.region.clone())],
                 });
                 credential_writes.push(static_cred_writes(&target.alias, &creds));
-                app_state.engaged.insert(
-                    target.alias.clone(),
-                    EngagedProfile {
-                        org: org.name.clone(),
-                        env: target.env,
-                        // The mode actually granted, not the one asked
-                        // for — the ENGAGED strip must never claim ADMIN
-                        // where the fallback delivered READONLY.
-                        mode: target.mode,
-                        account_id: target.account_id.clone(),
-                        role_name: target.role_name.clone(),
-                        region: target.region.clone(),
-                        project: req.project.clone(),
-                        engaged_at_unix_ms: now,
-                    },
-                );
+                // Carry forward whoever already holds this profile: two
+                // projects sharing a service share one engagement, and
+                // re-engaging must add a holder rather than replace the set.
+                let existing = app_state.engaged.get(&target.alias);
+                let mut entry = EngagedProfile {
+                    org: org.name.clone(),
+                    env: target.env,
+                    // The mode actually granted, not the one asked
+                    // for — the ENGAGED strip must never claim ADMIN
+                    // where the fallback delivered READONLY.
+                    mode: target.mode,
+                    account_id: target.account_id.clone(),
+                    role_name: target.role_name.clone(),
+                    region: target.region.clone(),
+                    project: req.project.clone(),
+                    held_by_projects: existing.map(|e| e.held_by_projects.clone()).unwrap_or_default(),
+                    held_adhoc: existing.is_some_and(|e| e.held_adhoc),
+                    engaged_at_unix_ms: now,
+                };
+                entry.add_holder(req.project.as_deref());
+                app_state.engaged.insert(target.alias.clone(), entry);
                 app_state.last_engage.insert(
                     format!("service:{}", target.alias),
                     state::LastEngage { env: req.env, mode: req.mode, at_unix_ms: now },

@@ -53,6 +53,18 @@ export interface LastEngage {
   atUnixMs: number;
 }
 
+/** A profile left engaged because another holder still needs it. */
+export interface RetainedProfile {
+  alias: string;
+  /** Project names, and "a direct engage" for a non-project hold. */
+  heldBy: string[];
+}
+
+export interface DisengageOutcome {
+  state: AppState;
+  retained: RetainedProfile[];
+}
+
 export interface EngagedProfile {
   org: string;
   env: Env;
@@ -60,7 +72,13 @@ export interface EngagedProfile {
   accountId: string;
   roleName: string;
   region: string;
+  /** The most recent project to engage it; only the latest of possibly
+   * several holders. `heldByProjects` is the authority. */
   project?: string;
+  /** Every project currently relying on this profile. */
+  heldByProjects?: string[];
+  /** Whether a direct, non-project engage also holds it. */
+  heldAdhoc?: boolean;
   engagedAtUnixMs: number;
 }
 

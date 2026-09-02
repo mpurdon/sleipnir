@@ -10,6 +10,7 @@ import type {
   GroupedDiscovery,
   Org,
   DeletedProject,
+  DisengageOutcome,
   Project,
 } from "./types";
 
@@ -142,7 +143,10 @@ export const renameAccount = (oldAlias: string, newAlias: string) =>
 export const getState = () => invoke<AppState>("get_state");
 export const setPin = (project: string, pinned: boolean) => invoke<AppState>("set_pin", { project, pinned });
 export const engage = (request: EngageRequest) => invoke<EngageOutcome>("engage", { request });
-export const disengage = (profiles: string[]) => invoke<AppState>("disengage", { profiles });
+/** Releases one holder's claim. `project` names it; omit for the direct,
+ * non-project engage. Keys are stripped only when the last holder lets go. */
+export const disengage = (profiles: string[], project?: string) =>
+  invoke<DisengageOutcome>("disengage", { profiles, project: project ?? null });
 export const disengageAll = () => invoke<AppState>("disengage_all");
 /** Rotates static ~/.aws/credentials keys for engaged profiles nearing
  * expiry; returns how many were refreshed. */

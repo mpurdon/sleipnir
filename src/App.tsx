@@ -72,6 +72,8 @@ export function App() {
     togglePin,
     disengageProfiles,
     disengageEverything,
+    retained,
+    clearRetained,
     error: stateError,
     clearError: clearStateError,
   } = useAppState();
@@ -233,6 +235,8 @@ export function App() {
         }}
         onDisengage={disengageProfiles}
         onDisengageAll={disengageEverything}
+        retained={retained}
+        onClearRetained={clearRetained}
       />
 
       {drawer && (

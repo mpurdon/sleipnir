@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AppState, EngagedProfile, Org } from "../lib/types";
+import type { AppState, EngagedProfile, Org, RetainedProfile } from "../lib/types";
 import { testProfile, type LoginProgress, type ProfileTest } from "../lib/tauri";
 import { ENV_LABELS, isSessionAlive, MODES, sessionMsLeft } from "../lib/constants";
 import { formatError } from "../lib/errors";
@@ -117,6 +117,10 @@ function TestModal({
 }
 
 /** One engaged profile chip: click to reveal copyable connection details. */
+function holderCount(e: EngagedProfile): number {
+  return (e.heldByProjects?.length ?? 0) + (e.heldAdhoc ? 1 : 0);
+}
+
 function EngagedChip({
   alias,
   entry,
@@ -126,6 +130,9 @@ function EngagedChip({
   entry: EngagedProfile;
   onDisengage: () => void;
 }) {
+  // Shared profiles are the ones where a disengage will not do what it looks
+  // like it does — say so before the click, not after.
+  const shared = holderCount(entry) > 1;
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [test, setTest] = useState<ProfileTest | "running" | { error: string } | null>(null);
@@ -167,7 +174,19 @@ function EngagedChip({
         <span className="label" style={{ color: isPrd ? "var(--c-magenta)" : mode.color }}>
           {ENV_LABELS[entry.env]}/{mode.label}
         </span>
-        <button className="rail-disc-btn hover-glow" title={`Disengage ${alias}`} onClick={onDisengage}>
+        {shared && (
+          <span
+            className="label shared-badge"
+            title={`Also held by: ${[...(entry.heldByProjects ?? []), ...(entry.heldAdhoc ? ["a direct engage"] : [])].join(", ")}`}
+          >
+            ×{holderCount(entry)}
+          </span>
+        )}
+        <button
+          className="rail-disc-btn hover-glow"
+          title={shared ? `Release this hold on ${alias} — it stays engaged for the others` : `Disengage ${alias}`}
+          onClick={onDisengage}
+        >
           <img src={disconnectIcon} alt="" className="disc-icon" draggable={false} />
         </button>
       </div>
@@ -222,6 +241,8 @@ export function Rail({
   onOpenHelp,
   onDisengage,
   onDisengageAll,
+  retained,
+  onClearRetained,
 }: {
   /** `tauri dev` build — badge the header so a dev window is never mistaken
    * for the installed app. */
@@ -247,8 +268,12 @@ export function Rail({
   onOpenSettings: () => void;
   /** Opens Settings on the help tab — guided tours and the docs link. */
   onOpenHelp: () => void;
-  onDisengage: (profiles: string[]) => void;
+  /** Releases one holder's claim. `project` names it; omit for a direct engage. */
+  onDisengage: (profiles: string[], project?: string) => void;
   onDisengageAll: () => void;
+  /** Profiles a disengage left alone because another holder still needs them. */
+  retained: RetainedProfile[];
+  onClearRetained: () => void;
 }) {
   // Tick so countdowns/lamps stay honest.
   const [, setTick] = useState(0);
@@ -369,6 +394,28 @@ export function Rail({
       </div>
 
       <SectionRule title="Engaged" />
+
+      {/* Not an error. The click did what was asked — one holder let go —
+          but the keys stay because another still needs them. Without this a
+          chip that refuses to vanish looks like a bug. */}
+      {retained.length > 0 && (
+        <Slab cut={5} tint="var(--c-yellow)" className="retained-note">
+          <div className="rail-group-head">
+            <span className="label" style={{ color: "var(--c-yellow)" }}>
+              KEPT — STILL IN USE
+            </span>
+            <button className="label hover-glow" style={{ color: "var(--c-dim)" }} onClick={onClearRetained}>
+              OK
+            </button>
+          </div>
+          {retained.map((r) => (
+            <div key={r.alias} className="label retained-line">
+              {r.alias} — held by {r.heldBy.join(", ")}
+            </div>
+          ))}
+        </Slab>
+      )}
+
       {engaged.length === 0 ? (
         <div className="label rail-empty" data-tour="rail-engaged">NOTHING ENGAGED</div>
       ) : (
@@ -396,7 +443,7 @@ export function Rail({
                   <button
                     className="rail-disc-btn hover-glow"
                     title="Disengage this group"
-                    onClick={() => onDisengage(entries.map(([alias]) => alias))}
+                    onClick={() => onDisengage(entries.map(([alias]) => alias), group)}
                   >
                     <img src={disconnectIcon} alt="" className="disc-icon" draggable={false} />
                   </button>
@@ -405,7 +452,7 @@ export function Rail({
                   entries
                     .sort(([a], [b]) => a.localeCompare(b))
                     .map(([alias, e]) => (
-                      <EngagedChip key={alias} alias={alias} entry={e} onDisengage={() => onDisengage([alias])} />
+                      <EngagedChip key={alias} alias={alias} entry={e} onDisengage={() => onDisengage([alias], group)} />
                     ))}
               </Slab>
             );
