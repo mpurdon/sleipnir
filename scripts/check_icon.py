@@ -33,6 +33,9 @@ RADIUS_RATIO = CORNER_RADIUS / BODY  # 0.225
 # loose PNGs. 16px is the one that decides whether the design works.
 RENDER_SIZES = [16, 32, 48, 64, 128, 256, 512, 1024]
 
+# Above a soft shadow, below the icon body.
+SOLID_ALPHA = 200
+
 BACKGROUNDS = [
     ("dock", (46, 48, 54)),
     ("light", (245, 245, 247)),
@@ -88,7 +91,11 @@ def main() -> int:
         ok("has transparency")
 
     print("\nmacOS grid")
-    bbox = alpha.getbbox()
+    # Threshold hard before measuring: a soft drop shadow reaches the canvas
+    # edge at low alpha, and measuring it as part of the body reports ~98% for
+    # artwork that is actually on the grid.
+    solid = alpha.point([0] * (SOLID_ALPHA + 1) + [255] * (255 - SOLID_ALPHA))
+    bbox = solid.getbbox()
     if bbox is None:
         fail("image is entirely transparent")
         return 1
@@ -117,8 +124,10 @@ def main() -> int:
     print("        use a CONTINUOUS corner (squircle), not a plain rounded rectangle")
 
     print("\nLegibility")
-    # Contrast of the body against the two backgrounds it will sit on. A dark
-    # icon on the dark Dock is the failure mode the current artwork has.
+    # Two different things, and conflating them cries wolf. Tonal spread is
+    # whether the SUBJECT reads; mean-vs-background is whether the SILHOUETTE
+    # separates. A deliberately dark icon with a bright subject scores low on
+    # the second and is perfectly legible — so a strong spread excuses it.
     small = im.resize((16, 16), Image.Resampling.LANCZOS)
     for name, bg in BACKGROUNDS[:2]:
         comp = Image.alpha_composite(Image.new("RGBA", (16, 16), bg + (255,)), small).convert("L")
@@ -126,10 +135,9 @@ def main() -> int:
         spread = max(vals) - min(vals)
         bg_lum = int(0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2])
         mean_delta = abs(sum(vals) / len(vals) - bg_lum)
-        verdict = "ok" if spread >= 90 and mean_delta >= 25 else "warn"
-        (ok if verdict == "ok" else warn)(
-            f"at 16px on {name}: tonal spread {spread}, mean vs background {mean_delta:.0f}"
-        )
+        (ok if spread >= 90 else warn)(f"at 16px on {name}: subject contrast {spread} (want 90+)")
+        if mean_delta < 25 and spread < 140:
+            warn(f"  and the silhouette barely separates from {name} (mean delta {mean_delta:.0f})")
 
     # Contact sheet.
     pad, label_w = 18, 70
