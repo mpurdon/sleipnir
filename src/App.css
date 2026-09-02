@@ -1730,6 +1730,11 @@
 
 .sidebar-footer {
   margin-top: auto;
+  /* A row, and the primary control flexes rather than claiming 100% — a
+     sibling used to have nowhere to go but the next line. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .settings-btn {
@@ -1743,7 +1748,8 @@
   font-weight: 700;
   letter-spacing: 1.2px;
   text-transform: uppercase;
-  width: 100%;
+  flex: 1;
+  text-align: left;
 }
 
 /* Error banner */

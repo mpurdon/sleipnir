@@ -187,21 +187,18 @@
   flex-wrap: wrap;
 }
 
-/* Rail help button, beside SETTINGS in the footer. */
+/* Help sits with the window controls, so it inherits .win-btn's box and
+   only overrides the glyph — a "?" at the minimise dash's 19px reads as
+   oversized punctuation rather than as a button. */
 .help-btn {
   background: none;
-  border: 1px solid var(--c-edge);
-  color: var(--c-dim);
+  border: 0;
   cursor: pointer;
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 11px;
-  line-height: 1;
-  padding: 0 9px;
-  align-self: stretch;
+  font-size: 15px;
 }
 
 .help-btn:hover {
   color: var(--c-yellow);
-  border-color: var(--c-yellow);
 }

@@ -293,6 +293,14 @@ export function Rail({
           </span>
         )}
         <div className="rail-window-controls">
+          <button
+            className="win-btn help-btn hover-glow"
+            title="Guided tours and help docs"
+            onClick={onOpenHelp}
+            data-tour="rail-help"
+          >
+            ?
+          </button>
           <button className="win-btn hover-glow" title="Minimize" onClick={() => void minimizeWindow()}>
             –
           </button>
@@ -418,9 +426,6 @@ export function Rail({
       <div className="sidebar-footer">
         <button className="settings-btn hover-glow" onClick={onOpenSettings}>
           ⚙ SETTINGS
-        </button>
-        <button className="help-btn hover-glow" onClick={onOpenHelp} title="Guided tours and help docs" data-tour="rail-help">
-          ?
         </button>
       </div>
       </div>
