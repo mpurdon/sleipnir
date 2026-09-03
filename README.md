@@ -111,11 +111,39 @@ there. The split lives in `src-tauri/src/paths.rs`.
 Early but daily-driven. Signed and notarized, with tag-driven releases
 that publish to the Homebrew tap automatically.
 
-Roadmap:
+### Roadmap
 
-- Universal (Intel) builds; Windows packaging.
+**Reaching people.** There is no update mechanism — no updater plugin, no
+version check. Someone who installed at 0.1.5 stays on 0.1.5 and has no way
+to learn otherwise, so every fix reaches a teammate only if they are told to
+run `brew upgrade`. A launch-time check against the releases API is the
+cheap fix; `tauri-plugin-updater` is the real one.
+
+**A TUI.** `sleipnir` launches the GUI; a subcommand should open a terminal
+interface over the same config and state — browse and engage services,
+manage projects, see what is engaged, disengage. For anyone who lives in a
+terminal that is a shorter path than reaching for a window, and it makes the
+app usable over SSH, where the GUI cannot go. The argument dispatch in
+`src-tauri/src/launch.rs` was written with this in mind: subcommands have a
+home, and `creds` already proves the binary can run headless.
+
+**Interface.**
+
 - Drag one standalone engaged service onto another to create a project from
   the pair. Dragging a standalone onto an *existing* project already works.
-- Per-environment profile names, so one service can be engaged at two
-  environments at once. Today a profile is one name holding one set of
-  keys, so `global-event-bus` is DEV or PRD, never both.
+- Pin PROJECTS and SERVICES in the rail. They scroll out of view under a
+  long org list — the same cause as the settings footer, but pinning primary
+  navigation is a layout decision rather than a bug fix.
+
+**Model.** Per-environment profile names, so one service can be engaged at
+two environments at once. Today a profile is one name holding one set of
+keys, so `global-event-bus` is DEV or PRD, never both. Reference counting
+covers two projects sharing a service at the *same* environment; this is the
+case it cannot reach.
+
+**Platform.** Universal (Intel) builds; Windows packaging. The Keychain
+wrapper already speaks Windows Credential Manager.
+
+**Housekeeping.** A dangling `v0.1.2` tag with no release behind it (the run
+that died on a notarization 401), and two correctable `brew style` offenses
+in the tap's `Formula/gitf.rb`.

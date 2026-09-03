@@ -138,6 +138,26 @@ nothing.
 > `brew upgrade --cask sleipnir-aws` — or `brew reinstall --cask
 > sleipnir-aws` if you are already on the current version.
 
+## How do I know when there is a new version?
+
+You do not, yet — Sleipnir has no update check. It will not tell you a
+newer release exists, and it will not update itself. Adding that is on the
+roadmap.
+
+Until then, upgrading is manual and worth doing periodically:
+
+```sh
+brew upgrade --cask sleipnir-aws
+```
+
+> [!TIP]
+> Quit the app first. Upgrading while it is running replaces the bundle on
+> disk underneath a process still executing the old build.
+
+If you are the person who publishes releases, this cuts both ways: a
+teammate who installed months ago is still on that version and has no way
+to find out. Tell them when something matters.
+
 ## Is there a Windows or Intel Mac build?
 
 Not yet. Sleipnir is Apple Silicon, macOS Monterey or newer. Universal
