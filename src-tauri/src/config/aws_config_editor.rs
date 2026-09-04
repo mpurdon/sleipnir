@@ -243,6 +243,22 @@ fn remove_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str], k
 /// Renames a stanza in place — header line plus any `credential_process`
 /// value referencing `--profile old` — leaving every other byte untouched.
 /// A missing stanza is a no-op.
+/// Whether the file already contains a stanza with this name.
+///
+/// Exists for the rename guard. Renaming rewrites a header line in place, so
+/// a destination name that is already present leaves two sections with the
+/// same name — and that is not a sleipnir-shaped problem: every AWS SDK
+/// refuses to parse the *whole file*, so one bad rename takes out every
+/// profile the user has, sleipnir's and everyone else's.
+pub fn has_profile(file: AwsFile, name: &str) -> io::Result<bool> {
+    has_profile_at(&file.path(), file.style(), name)
+}
+
+fn has_profile_at(path: &Path, style: HeaderStyle, name: &str) -> io::Result<bool> {
+    let (lines, _) = read_lines(path)?;
+    Ok(find_section(&lines, style, name).is_some())
+}
+
 pub fn rename_profile(file: AwsFile, old: &str, new: &str) -> io::Result<()> {
     rename_profile_at(&file.path(), file.style(), old, new)
 }
@@ -289,6 +305,51 @@ mod tests {
             profile: profile.into(),
             keys: kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         }
+    }
+
+    /// A temp file for the rename/exists tests.
+    fn with_file(initial: &str, f: impl FnOnce(&Path)) -> String {
+        let dir = std::env::temp_dir().join(format!("sleipnir-rn-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("cfg-{:p}", initial.as_ptr()));
+        std::fs::write(&path, initial).unwrap();
+        f(&path);
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        out
+    }
+
+    #[test]
+    fn has_profile_sees_stanzas_from_any_tool() {
+        let cfg = "[profile mine]\nregion = us-east-1\n\n[profile theirs]\nca_bundle = /x.pem\n";
+        with_file(cfg, |p| {
+            assert!(has_profile_at(p, HeaderStyle::ConfigProfile, "mine").unwrap());
+            // The one that matters: a stanza sleipnir never wrote.
+            assert!(has_profile_at(p, HeaderStyle::ConfigProfile, "theirs").unwrap());
+            assert!(!has_profile_at(p, HeaderStyle::ConfigProfile, "absent").unwrap());
+        });
+    }
+
+    #[test]
+    fn has_profile_on_a_missing_file_is_false_not_an_error() {
+        let missing = std::env::temp_dir().join("sleipnir-definitely-absent.cfg");
+        let _ = std::fs::remove_file(&missing);
+        assert!(!has_profile_at(&missing, HeaderStyle::ConfigProfile, "any").unwrap());
+    }
+
+    /// Demonstrates precisely what the guard in rename_account prevents: the
+    /// editor renames a header in place, so renaming onto an existing name
+    /// produces two identical sections and every AWS SDK stops parsing the
+    /// file. The editor is not the right place to refuse — it has no idea
+    /// what the caller intends — so this pins the behaviour the caller must
+    /// guard against.
+    #[test]
+    fn renaming_onto_an_existing_name_would_duplicate_the_section() {
+        let cfg = "[profile a]\nregion = us-east-1\n\n[profile b]\nregion = us-west-2\n";
+        let out = with_file(cfg, |p| {
+            rename_profile_at(p, HeaderStyle::ConfigProfile, "a", "b").unwrap();
+        });
+        assert_eq!(out.matches("[profile b]").count(), 2, "two sections named b");
     }
 
     #[test]

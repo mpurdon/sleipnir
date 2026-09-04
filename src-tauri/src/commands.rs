@@ -527,6 +527,30 @@ pub fn rename_account(old_alias: String, new_alias: String) -> Result<RenameOutc
     if new_alias != old_alias && cfg.accounts.iter().any(|a| a.alias == new_alias) {
         return Err(AppError::Invalid(format!("alias '{new_alias}' is already in use")));
     }
+
+    // The alias is the AWS profile name, and rename rewrites a header line in
+    // place — so renaming onto a name that already exists in the AWS files
+    // leaves two sections called the same thing. That does not merely confuse
+    // sleipnir: every AWS SDK then refuses to parse the whole file, taking
+    // out every profile the user has. Checking only sleipnir's own accounts
+    // missed exactly this, because the colliding stanza belonged to another
+    // tool.
+    if new_alias != old_alias {
+        for file in [AwsFile::Config, AwsFile::Credentials] {
+            let name = match file {
+                AwsFile::Config => "~/.aws/config",
+                AwsFile::Credentials => "~/.aws/credentials",
+            };
+            if aws_config_editor::has_profile(file, &new_alias).unwrap_or(false) {
+                return Err(AppError::Invalid(format!(
+                    "{name} already has a profile named '{new_alias}' that sleipnir does not manage. \
+                     Renaming onto it would leave two sections with the same name, which stops every \
+                     AWS tool from reading the file at all. Pick a different name, or remove that \
+                     profile first."
+                )));
+            }
+        }
+    }
     let Some(account) = cfg.accounts.iter_mut().find(|a| a.alias == old_alias) else {
         return Err(AppError::Invalid(format!("unknown service '{old_alias}'")));
     };
