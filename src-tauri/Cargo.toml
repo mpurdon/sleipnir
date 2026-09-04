@@ -1,6 +1,6 @@
 [package]
 name = "sleipnir"
-version = "0.1.11"
+version = "0.1.12"
 description = "AWS SSO / credential manager"
 edition = "2021"
 
