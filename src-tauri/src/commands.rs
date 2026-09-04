@@ -298,9 +298,28 @@ pub async fn engage(app: AppHandle, request: engage::EngageRequest) -> Result<en
 /// ~/.aws/credentials in one write — with static-key delivery, disengage
 /// means the secrets are GONE, not merely refused. Key list is owned by
 /// engage so write and strip can never disagree.
+/// Removes sleipnir's static keys AND hands the profile back.
+///
+/// Both halves are the stand-down. Stripping the keys alone left the profile
+/// with nothing at all: sleipnir's credentials gone, and whatever credential
+/// source it displaced still commented out — so a profile another tool owned
+/// before sleipnir touched it stayed broken after sleipnir let go of it.
 fn strip_static_keys(profiles: &[String]) {
     let refs: Vec<&str> = profiles.iter().map(String::as_str).collect();
     let _ = aws_config_editor::remove_profiles_keys(AwsFile::Credentials, &refs, &engage::STATIC_CRED_KEYS);
+    for file in [AwsFile::Config, AwsFile::Credentials] {
+        match aws_config_editor::restore_profiles_keys(file, &refs) {
+            Ok(0) => {}
+            Ok(n) => applog::info(
+                format!("restored {n} key(s) a takeover had disabled"),
+                &json!({"file": format!("{file:?}"), "profiles": profiles}),
+            ),
+            Err(e) => applog::warn(
+                "could not restore keys disabled by a takeover",
+                &json!({"file": format!("{file:?}"), "error": e.to_string()}),
+            ),
+        }
+    }
 }
 
 /// A profile left engaged because something else still needs it.

@@ -259,6 +259,44 @@ fn has_profile_at(path: &Path, style: HeaderStyle, name: &str) -> io::Result<boo
     Ok(find_section(&lines, style, name).is_some())
 }
 
+/// Undoes a takeover: re-enables the keys it commented out, for the named
+/// profiles.
+///
+/// The takeover comment says "reversibly, with a marker", and the marker was
+/// real — but nothing ever removed it, so reversible meant "a human can
+/// uncomment this by hand". The consequence was worse than it sounds:
+/// disengaging removed sleipnir's static keys and left the profile's
+/// original credential source still disabled, so the profile was left unable
+/// to authenticate by *any* means and every other tool that relied on it
+/// stayed broken until someone noticed and edited the file.
+pub fn restore_profiles_keys(file: AwsFile, profiles: &[&str]) -> io::Result<usize> {
+    restore_profiles_keys_at(&file.path(), file.style(), profiles)
+}
+
+fn restore_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str]) -> io::Result<usize> {
+    let (mut lines, had_trailing_newline) = read_lines(path)?;
+    let mut restored = 0;
+    for profile in profiles {
+        let Some((start, end)) = find_section(&lines, style, profile) else {
+            continue;
+        };
+        for line in &mut lines[start + 1..end] {
+            // Match on the trimmed line but rebuild with the original
+            // indentation, so a restored key sits exactly where it was.
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix(DISABLED_MARKER) {
+                let indent = &line[..line.len() - trimmed.len()];
+                *line = format!("{indent}{rest}");
+                restored += 1;
+            }
+        }
+    }
+    if restored > 0 {
+        write_lines(path, lines, had_trailing_newline)?;
+    }
+    Ok(restored)
+}
+
 pub fn rename_profile(file: AwsFile, old: &str, new: &str) -> io::Result<()> {
     rename_profile_at(&file.path(), file.style(), old, new)
 }
@@ -317,6 +355,56 @@ mod tests {
         let out = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         out
+    }
+
+    /// The round trip that was missing: a takeover disables another tool's
+    /// SSO config, and letting go must give it back. Without this the profile
+    /// was left unable to authenticate by any means at all.
+    #[test]
+    fn restore_gives_a_taken_over_profile_back() {
+        let original = "[profile shared]\n# vpb — managed\nca_bundle = /x.pem\nsso_session = trajector\nsso_account_id = 224075521436\nregion = us-east-2\n";
+        let taken = run(original, &[keys("shared", &[("region", "us-east-2")])]);
+        assert!(taken.contains("# sleipnir-disabled: sso_session = trajector"), "takeover ran: {taken}");
+
+        let restored = with_file(&taken, |p| {
+            let n = restore_profiles_keys_at(p, HeaderStyle::ConfigProfile, &["shared"]).unwrap();
+            assert_eq!(n, 2, "both sso keys restored");
+        });
+        assert!(restored.contains("\nsso_session = trajector\n"), "{restored}");
+        assert!(restored.contains("\nsso_account_id = 224075521436\n"), "{restored}");
+        assert!(!restored.contains(DISABLED_MARKER), "no markers left: {restored}");
+        // Everything the takeover never owned must be untouched.
+        assert!(restored.contains("ca_bundle = /x.pem"));
+        assert!(restored.contains("# vpb — managed"));
+    }
+
+    /// Restoring must not reach into a neighbouring profile's disabled keys.
+    #[test]
+    fn restore_is_scoped_to_the_named_profile() {
+        let cfg = "[profile a]\n# sleipnir-disabled: sso_session = one\n\n[profile b]\n# sleipnir-disabled: sso_session = two\n";
+        let out = with_file(cfg, |p| {
+            assert_eq!(restore_profiles_keys_at(p, HeaderStyle::ConfigProfile, &["a"]).unwrap(), 1);
+        });
+        assert!(out.contains("\nsso_session = one\n"), "a restored: {out}");
+        assert!(out.contains("# sleipnir-disabled: sso_session = two"), "b untouched: {out}");
+    }
+
+    #[test]
+    fn restoring_a_profile_with_nothing_disabled_rewrites_nothing() {
+        let cfg = "[profile a]\nregion = us-east-1\n";
+        let out = with_file(cfg, |p| {
+            assert_eq!(restore_profiles_keys_at(p, HeaderStyle::ConfigProfile, &["a"]).unwrap(), 0);
+        });
+        assert_eq!(out, cfg, "byte-identical when there is nothing to do");
+    }
+
+    #[test]
+    fn restore_preserves_indentation() {
+        let cfg = "[profile a]\n    # sleipnir-disabled: sso_session = one\n";
+        let out = with_file(cfg, |p| {
+            restore_profiles_keys_at(p, HeaderStyle::ConfigProfile, &["a"]).unwrap();
+        });
+        assert!(out.contains("\n    sso_session = one\n"), "indent kept: {out:?}");
     }
 
     #[test]
