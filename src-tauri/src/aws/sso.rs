@@ -5,7 +5,7 @@
 
 use aws_sdk_sso::config::{BehaviorVersion, Region};
 use aws_sdk_sso::error::{ProvideErrorMetadata, SdkError};
-use aws_sdk_sso::Client as SsoClient;
+pub(crate) use aws_sdk_sso::Client as SsoClient;
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use serde_json::json;

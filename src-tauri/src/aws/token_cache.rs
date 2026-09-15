@@ -65,12 +65,8 @@ pub fn write(org_name: &str, token: &CachedToken) -> std::io::Result<()> {
     let mut token = token.clone();
     token.refresh_token = None;
 
-    let dir = cache_dir();
-    std::fs::create_dir_all(&dir)?;
-    let path = cache_path(org_name);
     let json = serde_json::to_string_pretty(&token).expect("serialize cached token");
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(tmp, path)?;
-    Ok(())
+    // Owner-only: this is an access token, and `~/.aws/sso/cache` is a
+    // directory other tools read. The AWS CLI writes its own entries 0600.
+    crate::atomic_file::write_private(&cache_path(org_name), &json)
 }

@@ -1,4 +1,5 @@
 mod applog;
+mod atomic_file;
 mod launch;
 mod paths;
 mod aws;
@@ -56,11 +57,47 @@ pub fn run() {
                 let _ = win.set_background_color(Some(tauri::window::Color(9, 11, 14, 255)));
             }
             // The backend owns the credential-rotation schedule (static
-            // ~/.aws/credentials keys go stale hourly); the frontend only
-            // triggers extra passes on user-visible events.
+            // ~/.aws/credentials keys go stale hourly); the frontend
+            // triggers extra passes when the window is shown again.
+            //
+            // The tick is short because of how sleep interacts with the
+            // timer. `tokio::time::sleep` is driven by `Instant`, and on
+            // Apple platforms `Instant` is `CLOCK_UPTIME_RAW`, which does
+            // NOT advance while the machine is asleep (see rust's
+            // `library/std/src/sys/pal/unix/../../time/unix.rs`). A timer
+            // armed before the lid closes therefore resumes mid-countdown
+            // on wake — so with a long tick, someone who opens their
+            // laptop in the morning gets minutes of awake time during
+            // which `~/.aws/credentials` holds keys that died overnight,
+            // and the first `aws` command of the day fails. Ticking every
+            // 30s bounds that. A pass costs a state read plus one small
+            // cache read per engaged profile and makes no network call
+            // unless something is actually near expiry, so the extra
+            // frequency is close to free.
+            //
+            // A macOS `NSWorkspace::didWakeNotification` hook would close
+            // the remaining seconds, at the price of platform-specific
+            // code the Windows packaging on the roadmap would have to
+            // work around.
             tauri::async_runtime::spawn(async {
+                const TICK: std::time::Duration = std::time::Duration::from_secs(30);
+                let mut last_tick = std::time::SystemTime::now();
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(240)).await;
+                    tokio::time::sleep(TICK).await;
+                    // SystemTime is the wall clock, so unlike the timer it
+                    // *does* count time spent asleep. A gap much larger
+                    // than the tick means the machine was suspended, which
+                    // is worth a log line: it is the explanation for keys
+                    // that were dead on arrival this morning.
+                    let now = std::time::SystemTime::now();
+                    let elapsed = now.duration_since(last_tick).unwrap_or(TICK);
+                    last_tick = now;
+                    if elapsed > TICK * 4 {
+                        applog::info(
+                            format!("resumed after {}s asleep — rotating credentials now", elapsed.as_secs()),
+                            &serde_json::json!({"asleepSecs": elapsed.as_secs()}),
+                        );
+                    }
                     let _ = commands::refresh_engaged_credentials().await;
                 }
             });
@@ -105,6 +142,7 @@ pub fn run() {
             commands::disengage_all,
             commands::attach_engaged_to_project,
             commands::refresh_engaged_credentials,
+            commands::credential_health,
             commands::is_dev_build,
             commands::app_paths,
             commands::open_in_file_manager,

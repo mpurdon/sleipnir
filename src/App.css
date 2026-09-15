@@ -107,15 +107,21 @@
   cursor: grabbing;
 }
 
+/* Border follows the text colour, so a badge is styled by setting `color`
+   alone. */
+.shared-badge,
+.cred-badge {
+  border: 1px solid currentColor;
+  padding: 0 4px;
+  cursor: help;
+  flex: none;
+}
+
 /* A profile held by more than one project (or a project plus a direct
    engage). Marked because disengaging it will not do what the button
    appears to promise. */
 .shared-badge {
   color: var(--c-yellow);
-  border: 1px solid var(--c-yellow);
-  padding: 0 4px;
-  cursor: help;
-  flex: none;
 }
 
 .retained-note {

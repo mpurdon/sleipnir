@@ -65,6 +65,19 @@ export interface DisengageOutcome {
   retained: RetainedProfile[];
 }
 
+/** What the keys actually sitting in `~/.aws/credentials` for an engaged
+ * profile are worth. Mirrors src-tauri/src/commands.rs's CredentialHealth,
+ * where the rationale lives. */
+export interface CredentialHealth {
+  alias: string;
+  /** Decided in the backend, which owns the rotation margin these
+   * thresholds are only meaningful against. */
+  level: "ok" | "expiring" | "stale";
+  /** Why the last rotation attempt failed, if one did. Cleared by the next
+   * success. */
+  lastError: string | null;
+}
+
 export interface EngagedProfile {
   org: string;
   env: Env;

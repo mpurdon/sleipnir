@@ -8,6 +8,8 @@
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use crate::applog;
 use crate::config::aws_config_editor::{self, AwsFile, ProfileKeys};
@@ -15,7 +17,7 @@ use crate::config::{Account, Env, Mode, OrgConfig};
 use crate::discovery::classify_role;
 use crate::state::{self, EngagedProfile};
 use super::creds_cache::{self, CachedRoleCreds};
-use super::sso::{concise_aws_error, is_retryable, send_retrying, sso_client, valid_access_token, DiscoveryError};
+use super::sso::{concise_aws_error, is_retryable, send_retrying, sso_client, valid_access_token, DiscoveryError, SsoClient};
 
 /// `GetRoleCredentials` fan-out width — same throttling caution as
 /// discovery, and engages are usually ≤ a dozen accounts anyway.
@@ -255,10 +257,89 @@ fn resolve_target(account: &Account, env: Env, mode: Mode, default_region: &str)
     ))
 }
 
+/// Why a profile's last credential rotation failed, per alias, cleared the
+/// moment one succeeds.
+///
+/// A rotation that fails is otherwise completely silent: the sweep logs a
+/// warning and moves on, the rail keeps showing the service as ENGAGED,
+/// and the keys in `~/.aws/credentials` quietly rot until someone runs an
+/// `aws` command and gets a wall of SDK error text. A dead SSO session is
+/// already visible on the org lamp, but a failure that affects one profile
+/// while the session is fine — a renamed permission set, throttling, a
+/// network blip mid-sweep — had nowhere to show up at all.
+static ROTATION_TROUBLE: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// The guarded data is a plain map, so a panic elsewhere poisons nothing
+/// worth protecting — recover rather than cascade into the rotation sweep.
+fn trouble_map() -> std::sync::MutexGuard<'static, BTreeMap<String, String>> {
+    ROTATION_TROUBLE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn note_trouble(alias: &str, message: String) {
+    trouble_map().insert(alias.to_string(), message);
+}
+
+/// Called on every successful rotation and on disengage — a profile with no
+/// entry is a profile with nothing to report.
+pub fn clear_trouble(alias: &str) {
+    trouble_map().remove(alias);
+}
+
+/// Everything sleipnir keeps about a profile outside `state.json` — the
+/// cached role credentials and the rotation note — dropped together.
+///
+/// The two stores were being cleared side by side by hand at every
+/// lifecycle site, which is how the rename path came to move one and not
+/// the other. One owner means the next store added here is handled
+/// everywhere at once instead of needing the same four edits.
+pub fn forget_profile(alias: &str) {
+    let _ = creds_cache::delete(alias);
+    clear_trouble(alias);
+}
+
+/// The same pair, carried to a new name.
+pub fn rename_profile_data(old_alias: &str, new_alias: &str) {
+    let _ = creds_cache::rename(old_alias, new_alias);
+    let mut map = trouble_map();
+    if let Some(note) = map.remove(old_alias) {
+        map.insert(new_alias.to_string(), note);
+    }
+}
+
+/// A snapshot, so a caller reporting on many profiles takes the lock once
+/// rather than once per alias.
+pub fn trouble_snapshot() -> BTreeMap<String, String> {
+    trouble_map().clone()
+}
+
 /// Default rotation margin: engaged profiles whose static keys are within
 /// this of expiry get fresh ones (shared by the background tick and the
 /// connection test's pre-probe self-heal).
-pub const ROTATE_MARGIN_MS: i64 = 15 * 60_000;
+///
+/// It has to clear 15 minutes by a comfortable margin. Static keys in
+/// `~/.aws/credentials` carry no expiry, so an SDK that reads them invents
+/// one: the AWS SDKs' lazy identity cache stamps expiry-less credentials
+/// with a 15-minute default lifetime and won't re-read the file until then.
+/// Rotate at exactly 15 and a long-lived client can still be holding the
+/// previous set when it dies — the 240s sweep means we often replace keys
+/// with only ~11 minutes left, inside that client's 15-minute entitlement,
+/// which is a guaranteed ExpiredTokenException window once an hour.
+/// Rotating while the old keys have a comfortable margin of life left
+/// leaves every such consumer holding something still valid.
+pub const ROTATE_MARGIN_MS: i64 = SDK_IDENTITY_CACHE_MS + SWEEP_HEADROOM_MS;
+
+/// The lifetime the AWS SDKs invent for credentials that carry no expiry
+/// of their own — `DEFAULT_EXPIRATION` in the Smithy lazy identity cache.
+///
+/// This is the one external fact the rotation schedule is built on, so it
+/// is named once and derived from, rather than restated as a number in
+/// each place that needs it. A client that resolved static keys may keep
+/// using them for this long without re-reading the file.
+pub const SDK_IDENTITY_CACHE_MS: i64 = 15 * 60_000;
+
+/// Slack on top, so a rotation is never racing the deadline it exists to
+/// beat: enough for several 30s sweeps plus the round trip to fetch.
+const SWEEP_HEADROOM_MS: i64 = 10 * 60_000;
 
 /// Rotates static credentials for every listed engaged profile whose
 /// cached creds are within `margin_ms` of expiry — the moral equivalent
@@ -266,52 +347,93 @@ pub const ROTATE_MARGIN_MS: i64 = 15 * 60_000;
 /// org (a dead session skips all of that org's profiles at the cost of
 /// one check), and every fresh key lands in `~/.aws/credentials` via ONE
 /// atomic write. Returns how many profiles rotated.
-pub async fn rotate_stale_profiles(
-    orgs: &[OrgConfig],
-    entries: &[(String, EngagedProfile)],
-    margin_ms: i64,
-) -> usize {
+pub async fn rotate_stale_profiles(entries: &[(String, EngagedProfile)], margin_ms: i64) -> usize {
     use std::collections::HashMap;
-    let mut org_tokens: HashMap<String, Option<String>> = HashMap::new();
+
+    // One pass at a time. Four things ask for a rotation — the 30s tick,
+    // the post-login pass, the connection test's pre-probe, and the window
+    // coming back into view — and none of them coordinate; overlapping
+    // passes would fetch and cache the same aliases twice over. The guard
+    // belongs here rather than on any one command, because this is the
+    // thing that must not overlap: every caller is covered, and a new
+    // trigger costs nothing to add.
+    static IN_FLIGHT: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let Ok(_pass) = IN_FLIGHT.get_or_init(Default::default).try_lock() else {
+        return 0;
+    };
+
+    // Staleness decided once, here, rather than by the caller and again in
+    // the loop below — profiles engaged together expire together, so the
+    // passes that rotate anything usually touch every profile, and a
+    // second predicate over the same files is a second read of all of them.
+    let stale: Vec<&(String, EngagedProfile)> =
+        entries.iter().filter(|(alias, _)| !creds_cache::fresh_within(alias, margin_ms)).collect();
+    if stale.is_empty() {
+        return 0;
+    }
+
+    // Only now is the org list worth having: `config.toml` carries every
+    // org, account and project and is the largest file in play, while the
+    // overwhelmingly common pass has nothing due and never gets here.
+    let orgs = crate::config::load_or_seed().orgs;
+    // Token and client together: both are per-org and per-pass, so one
+    // memo covers both. A dead session still costs one check for all of
+    // that org's profiles, and a live one now builds a single SDK client —
+    // connector, TLS config and connection pool — that every profile on
+    // that org reuses. Building it inside the loop meant a fresh pool per
+    // stale profile, which the rotation margin makes worse than it sounds:
+    // profiles engaged together expire together, so a pass that rotates
+    // anything usually rotates several at once.
+    let mut org_sessions: HashMap<String, Option<(String, SsoClient)>> = HashMap::new();
     let mut writes: Vec<ProfileKeys> = Vec::new();
     let mut rotated = 0usize;
 
-    for (alias, entry) in entries {
-        if creds_cache::fresh_within(alias, margin_ms) {
-            continue;
-        }
+    for (alias, entry) in stale {
         let Some(org) = orgs.iter().find(|o| o.name == entry.org) else { continue };
-        let token = match org_tokens.get(&entry.org) {
-            Some(t) => t.clone(),
-            None => {
-                let t = crate::aws::sso_oidc::ensure_fresh_token(org).await.map(|c| c.access_token);
-                org_tokens.insert(entry.org.clone(), t.clone());
-                t
-            }
+        if !org_sessions.contains_key(&entry.org) {
+            let session = crate::aws::sso_oidc::ensure_fresh_token(org)
+                .await
+                .map(|c| (c.access_token, sso_client(&org.region)));
+            org_sessions.insert(entry.org.clone(), session);
+        }
+        let Some((token, client)) = &org_sessions[&entry.org] else {
+            // The org lamp already says the session is dead, but the
+            // profile's own keys are equally dead and the ENGAGED strip is
+            // where the user is looking.
+            note_trouble(alias, format!("the SSO session for '{}' has expired — log in again", entry.org));
+            continue;
         };
-        let Some(token) = token else {
-            continue; // session dead — the rail's lamp already says so
-        };
-        let client = sso_client(&org.region);
-        match fetch_role_creds(&client, &token, &org.name, &entry.account_id, &entry.role_name, &entry.region).await {
+        match fetch_role_creds(client, token, &org.name, &entry.account_id, &entry.role_name, &entry.region).await {
             Ok(creds) => {
                 if let Err(e) = creds_cache::write(alias, &creds) {
                     applog::warn(format!("{alias}: creds cache write failed"), &json!({"alias": alias, "error": e.to_string()}));
+                    note_trouble(alias, format!("could not cache fresh credentials: {e}"));
                     continue;
                 }
                 writes.push(static_cred_writes(alias, &creds));
+                clear_trouble(alias);
                 rotated += 1;
             }
-            Err(e) => applog::warn(
-                format!("{alias}: background credential rotation failed"),
-                &json!({"alias": alias, "error": e}),
-            ),
+            Err(e) => {
+                applog::warn(
+                    format!("{alias}: background credential rotation failed"),
+                    &json!({"alias": alias, "error": e}),
+                );
+                note_trouble(alias, e.to_string());
+            }
         }
     }
 
     if !writes.is_empty() {
         if let Err(e) = aws_config_editor::upsert_profiles(AwsFile::Credentials, &writes) {
             applog::error("rotation: credentials write failed", &json!({"error": e.to_string()}));
+            // The creds cache was updated per profile above, so without
+            // this every one of them now looks fresh while the file still
+            // holds the old keys — the self-concealing case. Flagging them
+            // is what keeps that visible.
+            for w in &writes {
+                note_trouble(&w.profile, format!("writing ~/.aws/credentials failed: {e}"));
+            }
             return 0;
         }
         applog::info(
@@ -374,6 +496,114 @@ mod tests {
         assert_eq!(r.mode, Mode::PowerUser);
         assert!(r.note.is_none());
     }
+
+    fn engaged_profile(holders: &[&str]) -> EngagedProfile {
+        EngagedProfile {
+            org: "t".into(),
+            env: Env::Dev,
+            mode: Mode::ReadOnly,
+            account_id: "111122223333".into(),
+            role_name: "ReadOnlyAccess".into(),
+            region: "us-east-2".into(),
+            project: holders.first().map(|h| h.to_string()),
+            held_by_projects: holders.iter().map(|h| h.to_string()).collect(),
+            held_adhoc: false,
+            engaged_at_unix_ms: 0,
+        }
+    }
+
+    /// Engage reads state, then spends seconds fetching role credentials.
+    /// Anything that committed in that window is in the file but not in
+    /// engage's copy, so writing that copy back would roll it away. The
+    /// holder is the case that bites: losing one turns a shared profile
+    /// into an unshared one, and the next disengage then strips keys that
+    /// another project is still using.
+    #[test]
+    fn a_holder_committed_while_an_engage_was_in_flight_survives_the_merge() {
+        let mut fresh = state::AppState::default();
+        fresh.engaged.insert("svc".to_string(), engaged_profile(&["beta"]));
+
+        // engage's own view, read before beta existed. `project` names the
+        // holder this engage is adding; the holder *set* is stale and gets
+        // rebuilt from `fresh`.
+        let deltas = vec![StateDelta::Engage { alias: "svc".into(), entry: engaged_profile(&["alpha"]) }];
+        apply_deltas(&mut fresh, deltas);
+
+        let merged = &fresh.engaged["svc"];
+        assert!(merged.held_by_projects.iter().any(|h| h == "beta"), "concurrent holder was dropped");
+        assert!(merged.held_by_projects.iter().any(|h| h == "alpha"), "this engage's holder is missing");
+    }
+
+    /// The merge keeps the *fresh* holder set but this engage's env/mode —
+    /// those are what the user just asked for and what the keys on disk
+    /// actually grant.
+    #[test]
+    fn the_merge_takes_env_and_mode_from_the_engage_not_the_stale_entry() {
+        let mut fresh = state::AppState::default();
+        fresh.engaged.insert("svc".to_string(), engaged_profile(&["beta"]));
+
+        let mut entry = engaged_profile(&[]);
+        entry.env = Env::Prd;
+        entry.mode = Mode::PowerUser;
+        apply_deltas(
+            &mut fresh,
+            vec![StateDelta::Engage { alias: "svc".into(), entry }],
+        );
+
+        let merged = &fresh.engaged["svc"];
+        assert_eq!(merged.env, Env::Prd);
+        assert_eq!(merged.mode, Mode::PowerUser);
+        assert!(merged.held_adhoc, "a direct engage must register as a holder");
+        assert!(merged.held_by_projects.iter().any(|h| h == "beta"));
+    }
+
+    #[test]
+    fn a_release_delta_removes_only_its_own_alias() {
+        let mut fresh = state::AppState::default();
+        fresh.engaged.insert("svc".to_string(), engaged_profile(&["alpha"]));
+        fresh.engaged.insert("other".to_string(), engaged_profile(&["alpha"]));
+        apply_deltas(&mut fresh, vec![StateDelta::Release { alias: "svc".into() }]);
+        assert!(!fresh.engaged.contains_key("svc"));
+        assert!(fresh.engaged.contains_key("other"));
+    }
+}
+
+/// One change `engage` makes to `state.json`, recorded instead of applied.
+///
+/// Engage reads state, then spends seconds on the network fetching role
+/// credentials, then writes. The copy it started from is stale by the time
+/// it finishes, so saving that copy wholesale would silently roll back an
+/// engage or disengage that completed in the meantime. Replaying deltas
+/// onto a freshly-loaded state under the state lock merges with concurrent
+/// work instead of overwriting it.
+enum StateDelta {
+    /// Holder carry-forward is redone at apply time against the *fresh*
+    /// entry, so a project that became a holder while this engage was in
+    /// flight is not dropped. The new holder is `entry.project`.
+    Engage { alias: String, entry: EngagedProfile },
+    Release { alias: String },
+    LastEngage { key: String, value: state::LastEngage },
+}
+
+fn apply_deltas(st: &mut state::AppState, deltas: Vec<StateDelta>) {
+    for delta in deltas {
+        match delta {
+            StateDelta::Engage { alias, mut entry } => {
+                let existing = st.engaged.get(&alias);
+                entry.held_by_projects = existing.map(|e| e.held_by_projects.clone()).unwrap_or_default();
+                entry.held_adhoc = existing.is_some_and(|e| e.held_adhoc);
+                let holder = entry.project.clone();
+                entry.add_holder(holder.as_deref());
+                st.engaged.insert(alias, entry);
+            }
+            StateDelta::Release { alias } => {
+                st.engaged.remove(&alias);
+            }
+            StateDelta::LastEngage { key, value } => {
+                st.last_engage.insert(key, value);
+            }
+        }
+    }
 }
 
 /// Runs the full engage. Assumes the org's SSO token is already valid —
@@ -386,7 +616,12 @@ pub async fn engage(
     req: &EngageRequest,
     on_progress: impl Fn(&str, &str, Option<&str>) + Send + Sync,
 ) -> Result<EngageOutcome, DiscoveryError> {
-    let mut app_state = state::load();
+    // Read-only: this drives the collision gate below and nothing else.
+    // Every mutation is recorded as a delta and replayed onto a fresh read
+    // at the end, so this copy going stale during the network work costs
+    // nothing.
+    let app_state = state::load();
+    let mut deltas: Vec<StateDelta> = Vec::new();
 
     // Cross-project collision gate: engaging a profile that is currently
     // engaged with a DIFFERENT env/mode silently repoints every terminal
@@ -484,11 +719,7 @@ pub async fn engage(
                     keys: vec![("region".to_string(), target.region.clone())],
                 });
                 credential_writes.push(static_cred_writes(&target.alias, &creds));
-                // Carry forward whoever already holds this profile: two
-                // projects sharing a service share one engagement, and
-                // re-engaging must add a holder rather than replace the set.
-                let existing = app_state.engaged.get(&target.alias);
-                let mut entry = EngagedProfile {
+                let entry = EngagedProfile {
                     org: org.name.clone(),
                     env: target.env,
                     // The mode actually granted, not the one asked
@@ -499,16 +730,17 @@ pub async fn engage(
                     role_name: target.role_name.clone(),
                     region: target.region.clone(),
                     project: req.project.clone(),
-                    held_by_projects: existing.map(|e| e.held_by_projects.clone()).unwrap_or_default(),
-                    held_adhoc: existing.is_some_and(|e| e.held_adhoc),
+                    // Overwritten at apply time against the fresh entry —
+                    // see `StateDelta::Engage`.
+                    held_by_projects: Vec::new(),
+                    held_adhoc: false,
                     engaged_at_unix_ms: now,
                 };
-                entry.add_holder(req.project.as_deref());
-                app_state.engaged.insert(target.alias.clone(), entry);
-                app_state.last_engage.insert(
-                    format!("service:{}", target.alias),
-                    state::LastEngage { env: req.env, mode: req.mode, at_unix_ms: now },
-                );
+                deltas.push(StateDelta::Engage { alias: target.alias.clone(), entry });
+                deltas.push(StateDelta::LastEngage {
+                    key: format!("service:{}", target.alias),
+                    value: state::LastEngage { env: req.env, mode: req.mode, at_unix_ms: now },
+                });
                 succeeded.push(EngagedRow {
                     alias: target.alias.clone(),
                     env: target.env,
@@ -534,26 +766,38 @@ pub async fn engage(
             for row in &succeeded {
                 on_progress(&row.alias, "failed", Some(&msg));
                 failed.push(FailedRow { alias: row.alias.clone(), message: msg.clone() });
-                app_state.engaged.remove(&row.alias);
+                deltas.push(StateDelta::Release { alias: row.alias.clone() });
             }
             succeeded.clear();
         }
     }
 
     for row in &succeeded {
+        // Fresh keys are on disk, so whatever the last rotation complained
+        // about is answered. Without this a profile that failed to rotate
+        // keeps its STALE badge after a successful re-engage, until the
+        // next sweep happens to clear it.
+        clear_trouble(&row.alias);
         on_progress(&row.alias, "done", None);
     }
 
     if let Some(project) = &req.project {
         if !succeeded.is_empty() {
-            app_state
-                .last_engage
-                .insert(format!("project:{project}"), state::LastEngage { env: req.env, mode: req.mode, at_unix_ms: now });
+            deltas.push(StateDelta::LastEngage {
+                key: format!("project:{project}"),
+                value: state::LastEngage { env: req.env, mode: req.mode, at_unix_ms: now },
+            });
         }
     }
-    if let Err(e) = state::save(&app_state) {
-        applog::error("engage: state.json write failed", &json!({"error": e.to_string()}));
-    }
+    // Merge rather than overwrite, and report the merged state: the UI
+    // should see everything engaged right now, not just this run's view.
+    let saved_state = match state::update(|fresh| apply_deltas(fresh, deltas)) {
+        Ok((_, merged)) => merged,
+        Err(e) => {
+            applog::error("engage: state.json write failed", &json!({"error": e.to_string()}));
+            state::load()
+        }
+    };
 
     applog::info(
         format!(
@@ -574,5 +818,5 @@ pub async fn engage(
         }),
     );
 
-    Ok(EngageOutcome { collisions: Vec::new(), succeeded, failed, state: app_state })
+    Ok(EngageOutcome { collisions: Vec::new(), succeeded, failed, state: saved_state })
 }

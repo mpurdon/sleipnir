@@ -16,6 +16,37 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// Serializes every read-modify-write of the shared AWS files.
+///
+/// Each public entry point below is `read_lines` -> mutate -> `write_lines`,
+/// and the callers overlap freely: the 240s rotation sweep, the post-login
+/// pass, the connection test's pre-probe self-heal, and engage/disengage
+/// from the UI all run on the same async runtime, and each does seconds of
+/// network I/O before it writes. Without this, two passes read the same
+/// file and the second write silently discards the first one's keys — and
+/// because the creds cache has *already* recorded the new expiry,
+/// `fresh_within` then reports the clobbered profile as fresh and the
+/// sweep skips it until the next rotation. The failure hides itself for a
+/// full cycle, which is exactly how "sleipnir says engaged, AWS says
+/// expired" happens.
+///
+/// The lock is deliberately one lock for both files: engage writes config
+/// and credentials back to back, and a per-file lock would let another
+/// pass interleave between them.
+///
+/// Held only across local file I/O, never across an `await` — the `_at`
+/// helpers are synchronous by construction and take no network.
+static AWS_FILES: Mutex<()> = Mutex::new(());
+
+/// Runs `f` with the AWS files locked. The guarded data is `()`, so a
+/// panic in another caller poisons nothing worth protecting — recover and
+/// carry on rather than cascading the panic into the rotation sweep.
+fn with_aws_files<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = AWS_FILES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeaderStyle {
@@ -105,17 +136,7 @@ fn write_lines(path: &Path, lines: Vec<String>, had_trailing_newline: bool) -> i
     if had_trailing_newline && !out.is_empty() {
         out.push('\n');
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("sleipnir-tmp");
-    std::fs::write(&tmp, out)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, path)
+    crate::atomic_file::write_private(path, &out)
 }
 
 /// Finds a stanza's [start, end) line range, end exclusive.
@@ -158,7 +179,7 @@ const DISABLED_MARKER: &str = "# sleipnir-disabled: ";
 /// place (or appends them at the stanza's end), preserving everything else
 /// byte-for-byte.
 pub fn upsert_profiles(file: AwsFile, profiles: &[ProfileKeys]) -> io::Result<()> {
-    upsert_profiles_at(&file.path(), file.style(), profiles)
+    with_aws_files(|| upsert_profiles_at(&file.path(), file.style(), profiles))
 }
 
 fn upsert_profiles_at(path: &Path, style: HeaderStyle, profiles: &[ProfileKeys]) -> io::Result<()> {
@@ -217,7 +238,7 @@ fn upsert_one(lines: &mut Vec<String>, style: HeaderStyle, spec: &ProfileKeys) {
 /// read+write (disengage removing static credentials for a whole project).
 /// Missing file/stanzas/keys are no-ops.
 pub fn remove_profiles_keys(file: AwsFile, profiles: &[&str], keys: &[&str]) -> io::Result<()> {
-    remove_profiles_keys_at(&file.path(), file.style(), profiles, keys)
+    with_aws_files(|| remove_profiles_keys_at(&file.path(), file.style(), profiles, keys))
 }
 
 fn remove_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str], keys: &[&str]) -> io::Result<()> {
@@ -251,7 +272,7 @@ fn remove_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str], k
 /// refuses to parse the *whole file*, so one bad rename takes out every
 /// profile the user has, sleipnir's and everyone else's.
 pub fn has_profile(file: AwsFile, name: &str) -> io::Result<bool> {
-    has_profile_at(&file.path(), file.style(), name)
+    with_aws_files(|| has_profile_at(&file.path(), file.style(), name))
 }
 
 fn has_profile_at(path: &Path, style: HeaderStyle, name: &str) -> io::Result<bool> {
@@ -270,7 +291,7 @@ fn has_profile_at(path: &Path, style: HeaderStyle, name: &str) -> io::Result<boo
 /// to authenticate by *any* means and every other tool that relied on it
 /// stayed broken until someone noticed and edited the file.
 pub fn restore_profiles_keys(file: AwsFile, profiles: &[&str]) -> io::Result<usize> {
-    restore_profiles_keys_at(&file.path(), file.style(), profiles)
+    with_aws_files(|| restore_profiles_keys_at(&file.path(), file.style(), profiles))
 }
 
 fn restore_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str]) -> io::Result<usize> {
@@ -297,8 +318,25 @@ fn restore_profiles_keys_at(path: &Path, style: HeaderStyle, profiles: &[&str]) 
     Ok(restored)
 }
 
-pub fn rename_profile(file: AwsFile, old: &str, new: &str) -> io::Result<()> {
-    rename_profile_at(&file.path(), file.style(), old, new)
+/// Renames a stanza, refusing if `new` is already present.
+///
+/// `rename_account` guards with `has_profile` before it touches anything,
+/// so it can report a good error while the rename is still abandonable.
+/// This is the same check made *unskippable*: the look and the rewrite
+/// happen under one lock, so a stanza that appears in the window between
+/// that guard and this write cannot still produce the duplicate-section
+/// file that stops every AWS SDK from parsing it at all. Returns whether
+/// the rename happened; `Ok(false)` means it refused.
+pub fn rename_profile(file: AwsFile, old: &str, new: &str) -> io::Result<bool> {
+    with_aws_files(|| rename_profile_checked_at(&file.path(), file.style(), old, new))
+}
+
+fn rename_profile_checked_at(path: &Path, style: HeaderStyle, old: &str, new: &str) -> io::Result<bool> {
+    if has_profile_at(path, style, new)? {
+        return Ok(false);
+    }
+    rename_profile_at(path, style, old, new)?;
+    Ok(true)
 }
 
 fn rename_profile_at(path: &Path, style: HeaderStyle, old: &str, new: &str) -> io::Result<()> {
@@ -601,5 +639,28 @@ region=us-east-1
         let out = run(initial, &[keys("core-services", &[("region", "us-east-2")])]);
         assert!(out.starts_with(initial), "existing content must be untouched");
         assert!(out.ends_with("\n[profile core-services]\n# managed by sleipnir\nregion = us-east-2\n"));
+    }
+
+    /// The rename guard in `rename_account` runs before anything is
+    /// written, so a stanza appearing between that check and this write
+    /// would otherwise still produce two identical section headers — a
+    /// file no AWS SDK will parse at all, taking out every profile on the
+    /// machine rather than just sleipnir's.
+    #[test]
+    fn a_rename_onto_an_existing_stanza_is_refused_not_performed() {
+        let before = "[profile a]\nregion = us-east-1\n\n[profile b]\nregion = us-west-2\n";
+        let after = with_file(before, |p| {
+            assert!(!rename_profile_checked_at(p, HeaderStyle::ConfigProfile, "a", "b").unwrap());
+        });
+        assert_eq!(after, before, "a refused rename must leave the file byte-identical");
+    }
+
+    #[test]
+    fn a_rename_onto_a_free_name_still_happens() {
+        let after = with_file("[profile a]\nregion = us-east-1\n", |p| {
+            assert!(rename_profile_checked_at(p, HeaderStyle::ConfigProfile, "a", "c").unwrap());
+        });
+        assert!(after.contains("[profile c]"));
+        assert!(!after.contains("[profile a]"));
     }
 }

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   Account,
   AppState,
+  CredentialHealth,
   DiscoveredAccount,
   EngageOutcome,
   EngageProgressEvent,
@@ -155,6 +156,7 @@ export const attachEngagedToProject = (alias: string, project: string) =>
 /** Rotates static ~/.aws/credentials keys for engaged profiles nearing
  * expiry; returns how many were refreshed. */
 export const refreshEngagedCredentials = () => invoke<number>("refresh_engaged_credentials");
+export const credentialHealth = () => invoke<CredentialHealth[]>("credential_health");
 
 export function onEngageProgress(cb: (p: EngageProgressEvent) => void): Promise<() => void> {
   return listen<EngageProgressEvent>("engage:progress", (e) => cb(e.payload));

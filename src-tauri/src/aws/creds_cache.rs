@@ -44,11 +44,28 @@ impl CachedRoleCreds {
     }
 }
 
+/// Just the expiry, without materialising the secret material around it.
+///
+/// Both hot paths — the rotation sweep's staleness check and the UI's
+/// health poll — want one integer, and `read` would allocate seven
+/// `String`s to hand it over, the largest being a ~1KB session token.
+/// Serde skips every other field without allocating.
+pub fn expiry_unix_ms(alias: &str) -> Option<i64> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ExpiryOnly {
+        expiration_unix_ms: i64,
+    }
+    let contents = std::fs::read_to_string(path(alias)).ok()?;
+    let parsed: ExpiryOnly = serde_json::from_str(&contents).ok()?;
+    Some(parsed.expiration_unix_ms)
+}
+
 /// True when the cached creds exist and won't expire within `margin_ms`.
 /// Missing/unreadable cache counts as NOT fresh.
 pub fn fresh_within(alias: &str, margin_ms: i64) -> bool {
-    read(alias)
-        .map(|c| c.expiration_unix_ms > crate::state::now_unix_ms() as i64 + margin_ms)
+    expiry_unix_ms(alias)
+        .map(|at| at > crate::state::now_unix_ms() as i64 + margin_ms)
         .unwrap_or(false)
 }
 
@@ -66,18 +83,8 @@ pub fn read(alias: &str) -> Option<CachedRoleCreds> {
 }
 
 pub fn write(alias: &str, creds: &CachedRoleCreds) -> io::Result<()> {
-    let dir = cache_dir();
-    std::fs::create_dir_all(&dir)?;
-    let p = path(alias);
     let json = serde_json::to_string_pretty(creds).expect("serialize cached role creds");
-    let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-    }
-    std::fs::rename(tmp, p)
+    crate::atomic_file::write_private(&path(alias), &json)
 }
 
 /// Carries the cached creds along with a profile rename. Missing source is

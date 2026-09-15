@@ -30,10 +30,13 @@ pub fn load_or_seed() -> SleipnirConfig {
     seeded
 }
 
+/// Published by temp+rename like every other file sleipnir owns: a bare
+/// write that dies part-way leaves a truncated `config.toml`, and this one
+/// holds every org, account and project — the whole declarative half of
+/// the app, and the only part not reconstructible from `~/.aws/config`.
 pub fn save(cfg: &SleipnirConfig) -> std::io::Result<()> {
-    std::fs::create_dir_all(config_dir())?;
     let toml_str = toml::to_string_pretty(cfg).expect("serialize sleipnir config");
-    std::fs::write(config_path(), toml_str)
+    crate::atomic_file::write(&config_path(), &toml_str)
 }
 
 /// Insert or replace (by `name`) one Org, then persist.

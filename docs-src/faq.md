@@ -90,6 +90,25 @@ credentials are refreshed before they expire, so you should not see a
 prompt. If you press ENGAGE just as a session dies, the login runs and the
 engage resumes automatically afterwards.
 
+## What does STALE or EXPIRING on an engaged service mean?
+
+ENGAGED says sleipnir set a service up. The badge says whether the keys it
+delivered still work — which is not always the same thing.
+
+**EXPIRING** means the keys are nearly out of time and the refresh that
+should already have replaced them has not managed to. **STALE** means they
+are gone: the refresh failed, the SSO session ended, or the keys aged out
+while sleipnir was not running. Hover the badge for the reason.
+
+Logging in to the org again fixes most cases, and the refresh runs by
+itself right afterwards. If the badge stays, disengage and engage the
+service again, and check **⚙ SETTINGS → DEVELOPER → LOGS** for the failure.
+
+Closing the lid is the common cause. The timer sleipnir refreshes on stops
+while the machine is asleep, so keys can outlive it overnight; bringing the
+sleipnir window back into view triggers a refresh immediately, and one runs
+on its own within about half a minute of waking.
+
 ## Can I use several AWS organizations?
 
 Yes. Add each as its own org; sessions are tracked independently and you can

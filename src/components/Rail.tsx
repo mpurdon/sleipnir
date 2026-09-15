@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AppState, EngagedProfile, Org, RetainedProfile } from "../lib/types";
-import { testProfile, type LoginProgress, type ProfileTest } from "../lib/tauri";
+import type { AppState, CredentialHealth, EngagedProfile, Org, RetainedProfile } from "../lib/types";
+import { credentialHealth, testProfile, type LoginProgress, type ProfileTest } from "../lib/tauri";
 import { ENV_LABELS, isSessionAlive, MODES, sessionMsLeft } from "../lib/constants";
 import { formatError } from "../lib/errors";
 import { closeWindow, minimizeWindow } from "../lib/drawerWindow";
@@ -116,6 +116,15 @@ function TestModal({
   );
 }
 
+/** Wording for a credential-health badge. Whether there is one to show,
+ * and how bad it is, was decided in the backend — see `CredentialHealth`. */
+function credMessage(h: CredentialHealth): string {
+  if (h.lastError) return `Last credential refresh failed: ${h.lastError}`;
+  return h.level === "stale"
+    ? "The delivered keys are expired or missing. Check the org's SSO session, then look at the log."
+    : "These keys should already have been replaced and have not been.";
+}
+
 /** One engaged profile chip: click to reveal copyable connection details. */
 function holderCount(e: EngagedProfile): number {
   return (e.heldByProjects?.length ?? 0) + (e.heldAdhoc ? 1 : 0);
@@ -124,10 +133,12 @@ function holderCount(e: EngagedProfile): number {
 function EngagedChip({
   alias,
   entry,
+  health,
   onDisengage,
 }: {
   alias: string;
   entry: EngagedProfile;
+  health: CredentialHealth | undefined;
   onDisengage: () => void;
 }) {
   // Shared profiles are the ones where a disengage will not do what it looks
@@ -174,6 +185,15 @@ function EngagedChip({
         <span className="label" style={{ color: isPrd ? "var(--c-magenta)" : mode.color }}>
           {ENV_LABELS[entry.env]}/{mode.label}
         </span>
+        {health && health.level !== "ok" && (
+          <span
+            className="label cred-badge"
+            style={{ color: health.level === "stale" ? "var(--c-magenta)" : "var(--c-yellow)" }}
+            title={credMessage(health)}
+          >
+            {health.level.toUpperCase()}
+          </span>
+        )}
         {shared && (
           <span
             className="label shared-badge"
@@ -287,9 +307,32 @@ export function Rail({
    * from the event so the whole target can light up, not just the row the
    * pointer happens to be over. */
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  /** Credential health per alias, refreshed on the same tick as the
+   * countdowns — it is a state read plus one small cache read per engaged
+   * profile, no network. */
+  const [health, setHealth] = useState<Record<string, CredentialHealth>>({});
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
-    return () => clearInterval(id);
+    let alive = true;
+    // A successful poll always hands back a fresh object, so it re-renders
+    // the rail by itself — which is what keeps the session countdowns
+    // honest. `setTick` is only needed when the poll fails and there is no
+    // new health to render.
+    const poll = () => {
+      void credentialHealth()
+        .then((rows) => {
+          if (alive) setHealth(Object.fromEntries(rows.map((r) => [r.alias, r])));
+        })
+        .catch(() => {
+          /* health is advisory — a failed read must never break the rail */
+          if (alive) setTick((t) => t + 1);
+        });
+    };
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
 
   const engaged = Object.entries(state.engaged);
@@ -483,7 +526,13 @@ export function Rail({
                   entries
                     .sort(([a], [b]) => a.localeCompare(b))
                     .map(([alias, e]) => (
-                      <EngagedChip key={alias} alias={alias} entry={e} onDisengage={() => onDisengage([alias], group)} />
+                      <EngagedChip
+                        key={alias}
+                        alias={alias}
+                        entry={e}
+                        health={health[alias]}
+                        onDisengage={() => onDisengage([alias], group)}
+                      />
                     ))}
               </Slab>
               </div>
@@ -505,7 +554,7 @@ export function Rail({
                 }}
                 onDragEnd={() => setDropTarget(null)}
               >
-                <EngagedChip alias={alias} entry={e} onDisengage={() => onDisengage([alias])} />
+                <EngagedChip alias={alias} entry={e} health={health[alias]} onDisengage={() => onDisengage([alias])} />
               </div>
             </Slab>
           ))}

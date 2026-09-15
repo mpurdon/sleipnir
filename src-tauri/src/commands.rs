@@ -262,12 +262,12 @@ pub fn get_state() -> state::AppState {
 
 #[tauri::command]
 pub fn set_pin(project: String, pinned: bool) -> Result<state::AppState, AppError> {
-    let mut st = state::load();
-    st.pins.retain(|p| p != &project);
-    if pinned {
-        st.pins.push(project);
-    }
-    state::save(&st)?;
+    let (_, st) = state::update(|st| {
+        st.pins.retain(|p| p != &project);
+        if pinned {
+            st.pins.push(project.clone());
+        }
+    })?;
     Ok(st)
 }
 
@@ -372,15 +372,25 @@ pub fn plan_disengage(
 
 #[tauri::command]
 pub fn disengage(profiles: Vec<String>, project: Option<String>) -> Result<DisengageOutcome, AppError> {
-    let mut st = state::load();
-    let (freed, retained) = plan_disengage(&mut st.engaged, &profiles, project.as_deref());
-
-    for p in &freed {
-        st.engaged.remove(p);
-        let _ = creds_cache::delete(p);
-    }
-    strip_static_keys(&freed);
-    state::save(&st)?;
+    // Keys come out before state is committed, exactly as before: the
+    // half-done state that matters is "recorded as engaged, keys already
+    // gone" — recoverable, a re-engage fixes it — and NOT "recorded as
+    // free, keys still live", which would leave a profile working after
+    // DISENGAGE said it had stopped.
+    //
+    // The strip runs inside the state lock and takes the AWS-file lock in
+    // turn. That nesting order (state, then files) is the only one in the
+    // app and nothing acquires them the other way round, so it cannot
+    // deadlock.
+    let ((freed, retained), st) = state::update(|st| {
+        let (freed, retained) = plan_disengage(&mut st.engaged, &profiles, project.as_deref());
+        for p in &freed {
+            st.engaged.remove(p);
+            engage::forget_profile(p);
+        }
+        strip_static_keys(&freed);
+        (freed, retained)
+    })?;
 
     applog::info(
         format!("disengaged {} profile(s), {} retained", freed.len(), retained.len()),
@@ -402,27 +412,29 @@ pub fn disengage(profiles: Vec<String>, project: Option<String>) -> Result<Disen
 /// only concerns the live engagement.
 #[tauri::command]
 pub fn attach_engaged_to_project(alias: String, project: String) -> Result<state::AppState, AppError> {
-    let mut st = state::load();
-    let Some(entry) = st.engaged.get_mut(&alias) else {
-        return Err(AppError::Invalid(format!("{alias} is not currently engaged")));
-    };
-    entry.add_holder(Some(&project));
-    entry.project = Some(project.clone());
-    state::save(&st)?;
+    let (_, st) = state::try_update(|st| {
+        let Some(entry) = st.engaged.get_mut(&alias) else {
+            return Err(AppError::Invalid(format!("{alias} is not currently engaged")));
+        };
+        entry.add_holder(Some(&project));
+        entry.project = Some(project.clone());
+        Ok(())
+    })?;
     applog::info("attached engaged profile to project", &json!({"alias": alias, "project": project}));
     Ok(st)
 }
 
 #[tauri::command]
 pub fn disengage_all() -> Result<state::AppState, AppError> {
-    let mut st = state::load();
-    let profiles: Vec<String> = st.engaged.keys().cloned().collect();
-    for p in &profiles {
-        let _ = creds_cache::delete(p);
-    }
-    strip_static_keys(&profiles);
-    st.engaged.clear();
-    state::save(&st)?;
+    let (profiles, st) = state::update(|st| {
+        let profiles: Vec<String> = st.engaged.keys().cloned().collect();
+        for p in &profiles {
+            engage::forget_profile(p);
+        }
+        strip_static_keys(&profiles);
+        st.engaged.clear();
+        profiles
+    })?;
     applog::info(format!("disengaged ALL ({} profile(s))", profiles.len()), &json!({"profiles": profiles}));
     Ok(st)
 }
@@ -433,13 +445,76 @@ pub fn disengage_all() -> Result<state::AppState, AppError> {
 /// nothing is engaged.
 #[tauri::command]
 pub async fn refresh_engaged_credentials() -> Result<usize, AppError> {
-    let st = state::load();
-    if st.engaged.is_empty() {
-        return Ok(0);
-    }
-    let entries: Vec<(String, state::EngagedProfile)> = st.engaged.into_iter().collect();
-    let orgs = config::load_or_seed().orgs;
-    Ok(engage::rotate_stale_profiles(&orgs, &entries, engage::ROTATE_MARGIN_MS).await)
+    let entries: Vec<(String, state::EngagedProfile)> = state::load().engaged.into_iter().collect();
+    Ok(engage::rotate_stale_profiles(&entries, engage::ROTATE_MARGIN_MS).await)
+}
+
+/// What the keys currently sitting in `~/.aws/credentials` are actually
+/// worth, per engaged profile.
+///
+/// The ENGAGED strip otherwise reports intent — "this service is engaged" —
+/// and nothing else checks whether the delivery behind it still works. The
+/// three ways it can stop working are all invisible without this: a
+/// rotation that failed, an SSO session that ended, and keys that simply
+/// aged out while the app was not running to rotate them. Reporting the
+/// cached expiry covers all three at once regardless of cause, because it
+/// is the same timestamp the resolver itself trusts.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthLevel {
+    Ok,
+    /// Rotation should already have replaced these and has not.
+    Expiring,
+    /// The delivered keys do not work.
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialHealth {
+    pub alias: String,
+    pub level: HealthLevel,
+    /// Why the last rotation attempt failed, if one did. Cleared by the
+    /// next success. The UI turns this into the badge's tooltip.
+    pub last_error: Option<String>,
+}
+
+/// Warn once the keys have less life left than a client is entitled to
+/// keep using them for.
+///
+/// Inside this window an SDK that resolved the credentials a moment ago
+/// will still be holding them when they die — precisely the failure the
+/// rotation margin exists to prevent — so reaching it means rotation has
+/// been failing quietly. Both numbers derive from the same external fact
+/// rather than from each other.
+const EXPIRING_SOON_MS: i64 = engage::SDK_IDENTITY_CACHE_MS;
+
+/// Read-only and cheap — a state read plus one small cache read per
+/// engaged profile. Safe to poll on the rail's existing countdown tick.
+///
+/// `async` so it runs on the async runtime: Tauri puts synchronous
+/// commands on the main thread, and this one is on a 30s repeat forever.
+#[tauri::command(async)]
+pub fn credential_health() -> Vec<CredentialHealth> {
+    let now = state::now_unix_ms() as i64;
+    let mut trouble = engage::trouble_snapshot();
+    state::load()
+        .engaged
+        .keys()
+        .map(|alias| {
+            let last_error = trouble.remove(alias);
+            let ms_left = creds_cache::expiry_unix_ms(alias).map(|at| at - now);
+            let level = match ms_left {
+                _ if last_error.is_some() => HealthLevel::Stale,
+                Some(left) if left > EXPIRING_SOON_MS => HealthLevel::Ok,
+                Some(left) if left > 0 => HealthLevel::Expiring,
+                // Expired — or no cache entry at all, which for a profile
+                // that is engaged is a fault in its own right.
+                _ => HealthLevel::Stale,
+            };
+            CredentialHealth { alias: alias.clone(), level, last_error }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -465,8 +540,7 @@ pub async fn test_profile(alias: String) -> Result<ProfileTest, AppError> {
     // reports the health of the live path, not yesterday's leftovers.
     let st = state::load();
     if let Some(entry) = st.engaged.get(&alias) {
-        let orgs = config::load_or_seed().orgs;
-        let _ = engage::rotate_stale_profiles(&orgs, &[(alias.clone(), entry.clone())], engage::ROTATE_MARGIN_MS).await;
+        let _ = engage::rotate_stale_profiles(&[(alias.clone(), entry.clone())], engage::ROTATE_MARGIN_MS).await;
     }
 
     let started = std::time::Instant::now();
@@ -583,21 +657,38 @@ pub fn rename_account(old_alias: String, new_alias: String) -> Result<RenameOutc
     }
     config::save(&cfg)?;
 
-    let mut st = state::load();
-    if let Some(e) = st.engaged.remove(&old_alias) {
-        st.engaged.insert(new_alias.clone(), e);
-    }
-    if let Some(le) = st.last_engage.remove(&format!("service:{old_alias}")) {
-        st.last_engage.insert(format!("service:{new_alias}"), le);
-    }
-    if let Err(e) = state::save(&st) {
-        applog::error("rename_account: state.json write failed", &json!({"error": e.to_string()}));
-    }
+    let st = match state::update(|st| {
+        if let Some(e) = st.engaged.remove(&old_alias) {
+            st.engaged.insert(new_alias.clone(), e);
+        }
+        if let Some(le) = st.last_engage.remove(&format!("service:{old_alias}")) {
+            st.last_engage.insert(format!("service:{new_alias}"), le);
+        }
+    }) {
+        Ok((_, st)) => st,
+        Err(e) => {
+            applog::error("rename_account: state.json write failed", &json!({"error": e.to_string()}));
+            state::load()
+        }
+    };
 
-    let _ = creds_cache::rename(&old_alias, &new_alias);
+    engage::rename_profile_data(&old_alias, &new_alias);
     for file in [AwsFile::Config, AwsFile::Credentials] {
-        if let Err(e) = aws_config_editor::rename_profile(file, &old_alias, &new_alias) {
-            applog::error("rename_account: aws file rename failed", &json!({"file": format!("{file:?}"), "error": e.to_string()}));
+        match aws_config_editor::rename_profile(file, &old_alias, &new_alias) {
+            // Refused: a stanza named `new_alias` appeared between the guard
+            // above and this write. Leaving the old stanza alone is the safe
+            // half of a bad situation — renaming anyway would give the file
+            // two identical section headers and stop every AWS tool reading
+            // it, sleipnir's profiles and everyone else's alike.
+            Ok(false) => applog::error(
+                "rename_account: aws file rename refused — destination stanza appeared mid-rename",
+                &json!({"file": format!("{file:?}"), "newAlias": new_alias}),
+            ),
+            Ok(true) => {}
+            Err(e) => applog::error(
+                "rename_account: aws file rename failed",
+                &json!({"file": format!("{file:?}"), "error": e.to_string()}),
+            ),
         }
     }
 

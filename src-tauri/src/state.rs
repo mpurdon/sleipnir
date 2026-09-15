@@ -12,6 +12,7 @@ use crate::config::{Env, Mode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -155,13 +156,48 @@ pub fn load() -> AppState {
     parsed
 }
 
-pub fn save(state: &AppState) -> std::io::Result<()> {
-    let path = state_path();
-    std::fs::create_dir_all(path.parent().unwrap())?;
+/// Serializes load -> mutate -> save on `state.json`.
+///
+/// Every engagement lives in this one file, along with the holder
+/// reference counts that decide whether a disengage actually strips a
+/// profile's keys or leaves it for another project. The callers are Tauri
+/// commands on a multi-threaded runtime, so two that each read, mutate and
+/// write will lose one of the two edits — and the edit that vanishes is
+/// typically a holder, which is the difference between "released" and
+/// "still needed by someone else".
+///
+/// `load` is deliberately NOT guarded: writes publish by `rename`, so a
+/// reader either sees the whole old file or the whole new one.
+static STATE_FILE: Mutex<()> = Mutex::new(());
+
+/// Load, mutate and save with the state file held for the whole sequence.
+///
+/// Returns the closure's own value alongside the state as actually
+/// written, which is what a command should hand back to the UI: it
+/// includes whatever a concurrent caller had already committed.
+pub fn update<T>(f: impl FnOnce(&mut AppState) -> T) -> std::io::Result<(T, AppState)> {
+    try_update(|state| Ok::<_, std::io::Error>(f(state)))
+}
+
+/// `update` for a mutation that can decide not to happen: the closure
+/// returning `Err` aborts the write, leaving the file exactly as it was,
+/// so a validation failure part-way through cannot commit half an edit.
+pub fn try_update<T, E>(f: impl FnOnce(&mut AppState) -> Result<T, E>) -> Result<(T, AppState), E>
+where
+    E: From<std::io::Error>,
+{
+    let _guard = STATE_FILE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut state = load();
+    let out = f(&mut state)?;
+    save(&state).map_err(E::from)?;
+    Ok((out, state))
+}
+
+/// Private on purpose: a bare save is a lost update waiting to happen, and
+/// every caller wants `update` instead.
+fn save(state: &AppState) -> std::io::Result<()> {
     let json = serde_json::to_string_pretty(state).expect("serialize app state");
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(tmp, path)
+    crate::atomic_file::write(&state_path(), &json)
 }
 
 #[cfg(test)]
