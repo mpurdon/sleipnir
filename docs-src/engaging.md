@@ -87,8 +87,11 @@ returned. That makes it a genuine diagnostic rather than a green light the
 app grants itself.
 
 > [!TIP]
-> The test needs the AWS CLI on your `PATH`. If it is not installed,
-> `brew install awscli` — everything else in Sleipnir works without it.
+> The test needs the AWS CLI. Sleipnir looks on your `PATH`, then in
+> `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`, since an app
+> opened from Finder or the Dock does not see the `PATH` your shell sets up.
+> If it is not installed, `brew install awscli` — everything else in
+> Sleipnir works without it.
 
 ## Disengaging
 

@@ -528,6 +528,32 @@ pub struct ProfileTest {
     pub ms: u64,
 }
 
+/// Where the AWS CLI's two common installers put it, searched after PATH.
+///
+/// Launched from Finder or the Dock, a macOS app gets launchd's PATH —
+/// `/usr/bin:/bin:/usr/sbin:/sbin` — and nothing a shell profile adds. The
+/// official .pkg symlinks into `/usr/local/bin` and Homebrew installs into
+/// `/opt/homebrew/bin`, so a bare `Command::new("aws")` finds the CLI under
+/// `tauri dev` (which inherits the terminal's PATH) and never in the
+/// installed app.
+const AWS_CLI_FALLBACK_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+
+/// The first `aws` in `dirs`, in order.
+fn find_aws_cli(dirs: impl IntoIterator<Item = std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    dirs.into_iter().map(|dir| dir.join("aws")).find(|p| p.is_file())
+}
+
+/// PATH first, so a user's own choice of CLI still wins; then the install
+/// locations a GUI launch leaves out. Falls back to the bare name, which
+/// keeps the NotFound error path below as the single "not installed" case.
+fn aws_cli() -> std::path::PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let search = std::env::split_paths(&path)
+        .chain(AWS_CLI_FALLBACK_DIRS.iter().map(std::path::PathBuf::from))
+        .chain(dirs::home_dir().map(|h| h.join(".local/bin")));
+    find_aws_cli(search).unwrap_or_else(|| "aws".into())
+}
+
 /// End-to-end profile verification: shells out to the REAL AWS CLI
 /// (`aws sts get-caller-identity --profile <alias>`), which reads
 /// `~/.aws/config`, invokes sleipnir's own `credential_process`, and hits
@@ -544,7 +570,7 @@ pub async fn test_profile(alias: String) -> Result<ProfileTest, AppError> {
     }
 
     let started = std::time::Instant::now();
-    let run = tokio::process::Command::new("aws")
+    let run = tokio::process::Command::new(aws_cli())
         .args(["sts", "get-caller-identity", "--profile", &alias, "--output", "json"])
         .output();
 
@@ -565,7 +591,10 @@ pub async fn test_profile(alias: String) -> Result<ProfileTest, AppError> {
                 account: None,
                 arn: None,
                 user_id: None,
-                message: Some("AWS CLI not found on PATH — install awscli to run this test".into()),
+                message: Some(
+                    "AWS CLI not found on PATH, in /opt/homebrew/bin, /usr/local/bin or ~/.local/bin — install awscli to run this test"
+                        .into(),
+                ),
                 ms: started.elapsed().as_millis() as u64,
             })
         }
@@ -788,6 +817,29 @@ mod tests {
 
     fn map(pairs: Vec<(&str, state::EngagedProfile)>) -> HashMap<String, state::EngagedProfile> {
         pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    /// A launchd PATH has no `aws` on it; the search must carry on into the
+    /// later directories rather than stop at the first, and must take the
+    /// earliest hit so PATH keeps precedence over the fallbacks.
+    #[test]
+    fn aws_cli_search_skips_dirs_without_it_and_keeps_order() {
+        let root = std::env::temp_dir().join(format!("sleipnir-awscli-{}", std::process::id()));
+        let (empty, first, second) = (root.join("empty"), root.join("first"), root.join("second"));
+        for d in [&empty, &first, &second] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(first.join("aws"), "").unwrap();
+        std::fs::write(second.join("aws"), "").unwrap();
+
+        let found = find_aws_cli([empty.clone(), first.clone(), second.clone()]);
+        assert_eq!(found, Some(first.join("aws")));
+        assert_eq!(find_aws_cli([empty.clone()]), None);
+        // A directory named `aws` is not the CLI.
+        std::fs::create_dir_all(empty.join("aws")).unwrap();
+        assert_eq!(find_aws_cli([empty, second.clone()]), Some(second.join("aws")));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The case that motivated all of this: readonly on a shared bus, used by
