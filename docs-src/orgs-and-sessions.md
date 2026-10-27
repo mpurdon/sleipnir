@@ -80,13 +80,23 @@ show that org's contents. If the session is dead, the click *is* the
 reconnect — the login starts immediately rather than making you find a
 button.
 
-## Signing out and removing
+## Refreshing, re-authenticating, signing out
 
-Open an org's settings with the ⚙ beside its name.
+Open an org's settings with the ⚙ beside its name. While the session is
+alive it offers three things, and the difference matters:
 
-- **Sign out** clears the cached credentials — token cache file and Keychain
-  entries — but keeps the org, its services and its projects. The next login
-  starts a fresh browser approval.
+- **↻ Refresh** rolls the hourly access token silently using the Keychain
+  refresh token. This is what the background upkeep does on its own; the
+  button just does it now. No browser.
+- **⇄ Log in again** discards the session — token cache file and Keychain
+  entries — and runs the browser approval immediately. Use it when you need
+  to genuinely re-authenticate: after a permission change that the old
+  session does not reflect, to switch the AWS user you approved as, or
+  when a session misbehaves in ways a refresh does not fix. Engaged
+  profiles get fresh keys as soon as the new session lands.
+- **Sign out** clears the same cached credentials but keeps the org, its
+  services and its projects, and stops there. The next login starts a
+  fresh browser approval.
 - **Delete** removes the org along with every service and project that
   references it, plus its cached credentials.
 

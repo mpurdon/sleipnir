@@ -34,6 +34,7 @@ export function OrgDrawer({
   onSignOut,
   onLogin,
   onRefresh,
+  onRelogin,
   onClose,
   onAdded,
 }: {
@@ -45,6 +46,8 @@ export function OrgDrawer({
   onLogin: (name: string) => void;
   /** Silent token refresh — the button shown while the session is alive. */
   onRefresh: (name: string) => void;
+  /** Discards the live session and runs the browser approval again. */
+  onRelogin: (name: string) => void;
   onClose: () => void;
   /** Called after a NEW org is saved and the user answered the
    * log-in-now prompt — the app closes the drawer, selects the org, and
@@ -100,8 +103,22 @@ export function OrgDrawer({
               </span>
               {st.alive ? (
                 <>
-                  <button className="label hover-glow" style={{ color: "var(--c-cyan)" }} onClick={() => onRefresh(org.name)}>
+                  <button
+                    className="label hover-glow"
+                    style={{ color: "var(--c-cyan)" }}
+                    title="Roll the access token silently using the Keychain refresh token"
+                    onClick={() => onRefresh(org.name)}
+                  >
                     ↻ REFRESH
+                  </button>
+                  <button
+                    className="label hover-glow"
+                    style={{ color: "var(--c-cyan)" }}
+                    disabled={loggingIn}
+                    title="Discard this session and approve in the browser again"
+                    onClick={() => onRelogin(org.name)}
+                  >
+                    {loggingIn ? "LOGGING IN…" : "⇄ LOG IN AGAIN"}
                   </button>
                   <button className="label hover-glow" style={{ color: "var(--c-yellow)" }} onClick={() => onSignOut(org.name)}>
                     SIGN OUT

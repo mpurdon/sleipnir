@@ -73,9 +73,18 @@ pub fn sign_out_org(name: String) -> Result<OrgStatus, AppError> {
     Ok(status_for(&org))
 }
 
+/// `fresh` discards the cached token and Keychain entries first, so the
+/// browser approval runs even while the session is alive. Without it a
+/// live session short-circuits to the silent refresh — right for a click
+/// on a red lamp, useless when the point is to re-authenticate.
 #[tauri::command]
-pub async fn login_org(app: AppHandle, name: String) -> Result<OrgStatus, AppError> {
+pub async fn login_org(app: AppHandle, name: String, fresh: Option<bool>) -> Result<OrgStatus, AppError> {
     let org = find_org(&name)?;
+    if fresh.unwrap_or(false) {
+        let _ = token_cache::delete(&name);
+        secrets::clear_org(&name);
+        applog::info("login_org: discarding session for a fresh login", &json!({"name": name}));
+    }
     match sso_oidc::login(&app, &org).await {
         Ok(_) => {
             // A fresh session means stale static keys can rotate NOW —

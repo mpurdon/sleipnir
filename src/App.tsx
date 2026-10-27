@@ -308,6 +308,7 @@ export function App() {
               onSignOut={signOut}
               onLogin={(name) => void login(name)}
               onRefresh={(name) => void refreshOne(name)}
+              onRelogin={(name) => void login(name, true)}
               onClose={() => void closeDrawer()}
               onAdded={(name, loginNow) => {
                 setActiveOrg(name);

@@ -95,14 +95,17 @@ export function useOrgs() {
     };
   }, []);
 
-  const login = useCallback(async (name: string) => {
+  /** `fresh` forces the browser approval even while the session is alive —
+   * the way to re-authenticate, as opposed to ↻ REFRESH which only rolls
+   * the access token. */
+  const login = useCallback(async (name: string, fresh = false) => {
     if (activeLoginName) return;
     setActiveLoginName(name);
     setActiveLoginProgress({ stage: "registering" });
     setError(null);
     cancelledLogin.current = false;
     try {
-      const updated = await loginOrg(name);
+      const updated = await loginOrg(name, fresh);
       setOrgs((prev) => prev.map((o) => (o.name === name ? updated : o)));
     } catch (e) {
       if (!cancelledLogin.current) setError(`Login failed for ${name}: ${formatError(e)}`);

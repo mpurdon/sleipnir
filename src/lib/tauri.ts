@@ -32,8 +32,10 @@ export async function listOrgs(): Promise<Org[]> {
   return orgs.map(toOrg);
 }
 
-export async function loginOrg(name: string): Promise<Org> {
-  const status = await invoke<OrgStatusPayload>("login_org", { name });
+/** `fresh` throws away the current session first so the browser approval
+ * runs again even while the session is alive. */
+export async function loginOrg(name: string, fresh = false): Promise<Org> {
+  const status = await invoke<OrgStatusPayload>("login_org", { name, fresh });
   return toOrg(status);
 }
 
