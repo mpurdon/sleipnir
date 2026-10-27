@@ -52,6 +52,19 @@ Your last choice per project is remembered, and the card shows it —
 `4 SERVICES · LAST PRD/READONLY` — so you can see what a click will do
 before you make it.
 
+### From the rail
+
+You do not have to open the PROJECTS drawer to move an engaged project.
+Expand its group in the rail and press **⇄ CHANGE ENV/MODE**: the same
+selectors appear, pre-set to what the group is engaged at now, and the
+engage button re-engages the project in place. Production and
+press-and-hold rules apply exactly as on the card.
+
+Repointing a group only ever collides with itself, so there is no
+"already engaged differently" prompt — unless a member is also held by
+another project or a direct engage, in which case the warning appears as
+usual, because those terminals would be moved too.
+
 ## Editing membership
 
 **⚙ SETTINGS** on the project card opens its membership list, where you can

@@ -594,6 +594,20 @@
   text-align: left;
 }
 
+/* Repoint controls inside an engaged project group. */
+.rail-repoint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.rail-repoint-link {
+  color: var(--c-dim);
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .rail-chip-block {
   display: flex;
   flex-direction: column;

@@ -203,6 +203,9 @@ export function App() {
         activeLoginName={activeLoginName}
         activeLoginProgress={activeLoginProgress}
         state={appState}
+        projects={projects}
+        accounts={accounts}
+        onStateChange={onStateChangeWithOrgRefresh}
         projectCount={orgProjects.length}
         serviceCount={orgAccounts.length}
         activeDrawer={drawer?.kind ?? null}

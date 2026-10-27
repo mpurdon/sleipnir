@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AppState, CredentialHealth, EngagedProfile, Org, RetainedProfile } from "../lib/types";
+import type { Account, AppState, CredentialHealth, EngagedProfile, Org, Project, RetainedProfile } from "../lib/types";
 import { credentialHealth, testProfile, type LoginProgress, type ProfileTest } from "../lib/tauri";
 import { ENV_LABELS, isSessionAlive, MODES, sessionMsLeft } from "../lib/constants";
 import { formatError } from "../lib/errors";
@@ -9,6 +9,7 @@ import { SectionRule, Slab } from "../theme";
 import sleipnirWordmark from "../assets/sleipnir-wordmark.png";
 import disconnectIcon from "../assets/disconnect.png";
 import closeIcon from "../assets/close.png";
+import { RailRepoint } from "./RailRepoint";
 
 function lampColor(org: Org, loggingIn: boolean): string {
   if (loggingIn) return "var(--c-yellow)";
@@ -248,6 +249,9 @@ export function Rail({
   activeLoginName,
   activeLoginProgress,
   state,
+  projects,
+  accounts,
+  onStateChange,
   projectCount,
   serviceCount,
   activeDrawer,
@@ -273,6 +277,12 @@ export function Rail({
   activeLoginName: string | null;
   activeLoginProgress: LoginProgress | null;
   state: AppState;
+  /** Every project and service across orgs — the rail shows all engaged
+   * groups, and repointing one needs its membership and env/role options. */
+  projects: Project[];
+  accounts: Account[];
+  /** Receives the fresh AppState after a repoint from the rail. */
+  onStateChange: (s: AppState) => void;
   projectCount: number;
   serviceCount: number;
   activeDrawer: string | null;
@@ -534,6 +544,16 @@ export function Rail({
                         onDisengage={() => onDisengage([alias], group)}
                       />
                     ))}
+                {open && (
+                  <RailRepoint
+                    group={group}
+                    entries={entries}
+                    projects={projects}
+                    accounts={accounts}
+                    state={state}
+                    onStateChange={onStateChange}
+                  />
+                )}
               </Slab>
               </div>
             );
