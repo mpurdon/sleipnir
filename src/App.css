@@ -1115,6 +1115,16 @@
   color: var(--c-text) !important;
 }
 
+/* AWS account number beside the service name: legible, but clearly secondary. */
+.service-account-id {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .role-inputs {
   display: flex;
   gap: 10px;

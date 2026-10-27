@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Account, AppState, Env, Mode, Org } from "../lib/types";
+import type { Account, AppState, Env, EnvTarget, Mode, Org } from "../lib/types";
 import { accountName, ENVS, ENV_LABELS } from "../lib/constants";
 import { availableRolesFor, resolveEngage, targetForEnv } from "../lib/roles";
 import { renameAccount } from "../lib/tauri";
@@ -59,6 +59,15 @@ function AliasEditor({ alias, onRenamed }: { alias: string; onRenamed: (next: st
   );
 }
 
+/** Environments whose AWS account ID contains the query, so a row that
+ * matched on a number can show which number it was. */
+function idHits(a: Account, q: string): [Env, string][] {
+  if (!q) return [];
+  return (Object.entries(a.environments) as [Env, EnvTarget | undefined][]).flatMap(([env, t]) =>
+    t && t.accountId.includes(q) ? [[env, t.accountId] as [Env, string]] : [],
+  );
+}
+
 export function ServicesDrawer({
   org,
   accounts,
@@ -89,11 +98,18 @@ export function ServicesDrawer({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);
 
+  const q = filter.trim().toLowerCase();
   const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const list = q ? accounts.filter((a) => a.alias.includes(q) || accountName(a).toLowerCase().includes(q)) : accounts;
+    const list = q
+      ? accounts.filter(
+          (a) =>
+            a.alias.toLowerCase().includes(q) ||
+            accountName(a).toLowerCase().includes(q) ||
+            idHits(a, q).length > 0,
+        )
+      : accounts;
     return [...list].sort((a, b) => accountName(a).localeCompare(accountName(b)));
-  }, [accounts, filter]);
+  }, [accounts, q]);
 
   function sel(key: string): Sel {
     return sels[key] ?? defaultSel(state, key);
@@ -178,17 +194,25 @@ export function ServicesDrawer({
           // the UI never offers a button that is certain to fail.
           const resolution = resolveEngage(a, s.env, s.mode);
           const rolesHere = availableRolesFor(a, s.env);
+          // The number beside the name: whichever one the filter found, else
+          // the selected env's, so the row always explains itself.
+          const shownId = idHits(a, q)[0]?.[1] ?? a.environments[s.env]?.accountId;
           return (
             <Slab key={a.alias} cut={4} className="catalog-row">
               <div className="catalog-row-head">
                 <button className="discovery-service-name hover-glow" onClick={() => setExpanded(isOpen ? null : a.alias)}>
-                  <span className="service-display-name">{accountName(a)}</span>
+                  <span className="service-display-name">
+                    {accountName(a)}
+                    {shownId && <span className="service-account-id">{shownId}</span>}
+                  </span>
                   <div className="env-chips">
                     {standalone ? (
-                      <span className="label env-chip">GLOBAL</span>
+                      <span className="label env-chip" title={a.environments.global?.accountId}>
+                        GLOBAL
+                      </span>
                     ) : (
                       ENVS.filter((e) => envs.includes(e)).map((e) => (
-                        <span key={e} className="label env-chip">
+                        <span key={e} className="label env-chip" title={a.environments[e]?.accountId}>
                           {ENV_LABELS[e]}
                         </span>
                       ))
