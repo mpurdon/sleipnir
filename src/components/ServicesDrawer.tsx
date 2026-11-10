@@ -159,6 +159,9 @@ export function ServicesDrawer({
 
   return (
     <div className="drawer-stack">
+      {/* Pinned while the rows scroll: an engage fired from far down the
+       * list reports here, and its result must not land off-screen. */}
+      <div className="catalog-sticky">
       <EngageFeedback eng={eng} />
 
       <div className="catalog-toolbar">
@@ -178,6 +181,7 @@ export function ServicesDrawer({
         >
           ↻ RE-SCAN
         </button>
+      </div>
       </div>
 
       <div className="catalog-rows" data-tour="service-rows">

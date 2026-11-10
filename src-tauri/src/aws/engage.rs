@@ -58,6 +58,23 @@ fn static_cred_writes(alias: &str, creds: &CachedRoleCreds) -> ProfileKeys {
     }
 }
 
+/// Turns the portal's bare `ForbiddenException: No access` into something
+/// actionable.
+///
+/// With a live session that error means the role is not assigned to this
+/// user on this account — and since the role name came from the catalog,
+/// the usual cause is a permission set renamed or reassigned since the last
+/// scan. The console keeps working because it lists roles live; only the
+/// saved name is stale, so the fix is a re-scan, which the raw text gives
+/// no hint of.
+fn explain_forbidden(message: String, role_name: &str) -> String {
+    if message.starts_with("ForbiddenException") {
+        format!("AWS no longer grants {role_name} on this account — it may have been renamed; re-scan to refresh roles")
+    } else {
+        message
+    }
+}
+
 /// One `GetRoleCredentials` round-trip mapped into the cache shape — the
 /// shared fetch used by engage's fan-out and background rotation.
 async fn fetch_role_creds(
@@ -81,7 +98,7 @@ async fn fetch_role_creds(
         if is_retryable(&e) {
             "AWS rate-limited the request even after retries — try again shortly".to_string()
         } else {
-            concise_aws_error(&e)
+            explain_forbidden(concise_aws_error(&e), role_name)
         }
     })?;
     let Some(c) = out.role_credentials() else {
@@ -480,6 +497,14 @@ mod tests {
         let r = resolve_target(&a, Env::Prd, Mode::Admin, "us-east-2").unwrap();
         assert_eq!(r.mode, Mode::ReadOnly);
         assert!(r.note.as_deref().unwrap().contains("fell back to READONLY"));
+    }
+
+    #[test]
+    fn forbidden_points_at_a_rescan_and_other_errors_pass_through() {
+        let msg = explain_forbidden("ForbiddenException: No access".into(), "ReadOnlyAccess");
+        assert!(msg.contains("ReadOnlyAccess") && msg.contains("re-scan"), "{msg}");
+        let other = "UnauthorizedException: Session token not found or invalid";
+        assert_eq!(explain_forbidden(other.into(), "ReadOnlyAccess"), other);
     }
 
     #[test]

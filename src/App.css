@@ -1549,6 +1549,22 @@
   min-width: 0;
 }
 
+/* Engage feedback + find/re-scan, pinned to the top of the drawer body.
+ * The negative margins swallow the body's padding so the opaque backing
+ * runs edge to edge and rows disappear cleanly beneath it; the bottom one
+ * cancels the stack gap, which the padding already provides. */
+.catalog-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: -16px -18px -12px;
+  padding: 16px 18px 12px;
+  background: var(--c-void);
+}
+
 .catalog-toolbar {
   display: flex;
   align-items: center;
